@@ -1,26 +1,77 @@
 @import "tailwindcss";
 
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  --background: #FDF4D2;
+  --foreground: #092328;
+  --primary-green: #76C457;
+  --primary-green-hover: #67b049;
+  --primary-dark: #092328;
+  --primary-dark-card: #0d323a;
+  --primary-cream: #FDF4D2;
+  --font-dm-sans: 'DM Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  --font-nunito: 'Nunito', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  --font-serif: 'Playfair Display', Georgia, serif;
 }
 
 @theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
-}
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+  --color-brand-green: #76C457;
+  --color-brand-green-hover: #67b049;
+  --color-brand-dark: #092328;
+  --color-brand-dark-light: #0f3942;
+  --color-brand-dark-card: #0d323a;
+  --color-brand-cream: #FDF4D2;
+  --color-brand-cream-card: #fffdf5;
+  --color-brand-border: #ebdca4;
+  --font-sans: 'DM Sans', var(--font-dm-sans);
+  --font-nunito: 'Nunito', var(--font-nunito);
+  --font-serif: 'Playfair Display', var(--font-serif);
 }
 
 body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  background-color: #FDF4D2;
+  color: #092328;
+  font-family: 'DM Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+}
+
+.font-editorial-italic {
+  font-family: 'Playfair Display', Georgia, serif;
+  font-style: italic;
+}
+
+@keyframes floatCash {
+  0% {
+    transform: translateY(0px) rotate(0deg);
+    opacity: 0.85;
+  }
+  50% {
+    transform: translateY(-10px) rotate(6deg);
+    opacity: 1;
+  }
+  100% {
+    transform: translateY(0px) rotate(0deg);
+    opacity: 0.85;
+  }
+}
+
+.animate-float-cash {
+  animation: floatCash 3s ease-in-out infinite;
+}
+
+.animate-float-cash-delayed {
+  animation: floatCash 3.5s ease-in-out infinite 1.2s;
+}
+
+/* Custom subtle glass & glow utilities */
+.glass-green-glow {
+  background: radial-gradient(circle at 30% 30%, rgba(118, 196, 87, 0.25) 0%, rgba(118, 196, 87, 0.05) 50%, transparent 70%);
+}
+
+.pill-active {
+  background-color: #092328;
+  color: #ffffff;
+}
+
+.pill-inactive {
+  background-color: rgba(9, 35, 40, 0.08);
+  color: #092328;
 }
