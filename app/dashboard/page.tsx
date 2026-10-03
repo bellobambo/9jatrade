@@ -2,6 +2,7 @@
 
 import { useState } from 'react';
 import Link from 'next/link';
+import toast from 'react-hot-toast';
 import { Navbar } from '@/components/Navbar';
 import { useTradeStore, TrustPassportData } from '@/lib/services/tradeStore';
 import { TrustPassportModal } from '@/components/TrustPassportModal';
@@ -28,7 +29,6 @@ export default function UnifiedTradeDashboard() {
 
   const [activeTab, setActiveTab] = useState<DashboardTab>(defaultTab);
   const [selectedPassport, setSelectedPassport] = useState<TrustPassportData | null>(null);
-  const [notification, setNotification] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
 
   // Modals state
   const [showCreateModal, setShowCreateModal] = useState(false);
@@ -57,11 +57,8 @@ export default function UnifiedTradeDashboard() {
   const [financingFee, setFinancingFee] = useState<number>(600000);
   const [conditions, setConditions] = useState<string>('Valid waybill and formal buyer obligation acknowledgement required.');
 
-  const showToast = (message: string, type: 'success' | 'error' = 'success') => {
-    setNotification({ message, type });
-    setTimeout(() => setNotification(null), 5000);
-  };
-  const showError = (error: unknown) => showToast(error instanceof Error ? error.message : 'Canton command failed.', 'error');
+  const showToast = (message: string) => toast.success(message);
+  const showError = (error: unknown) => toast.error(error instanceof Error ? error.message : 'Canton command failed.');
 
   // Actions
   const handleCreateInvoice = async (e: React.FormEvent) => {
@@ -204,17 +201,6 @@ export default function UnifiedTradeDashboard() {
   return (
     <div className="flex flex-col min-h-screen bg-[#FDF4D2] text-[#092328] font-sans">
       <Navbar />
-
-      {/* Notifications */}
-      {notification && (
-        <div className={`fixed bottom-5 right-5 z-50 px-5 py-3.5 rounded-2xl shadow-xl border text-sm flex items-center gap-3 transition-all ${notification.type === 'success'
-          ? 'bg-[#092328] text-[#76C457] border-[#13444e]'
-          : 'bg-red-950 text-red-200 border-red-800'
-          }`}>
-          <span className="font-medium">{notification.message}</span>
-          <button onClick={() => setNotification(null)} className="opacity-70 hover:opacity-100 font-bold ml-2">✕</button>
-        </div>
-      )}
 
       {/* Dashboard Top Banner */}
       <div className="bg-[#FDF4D2] border-b border-[#ebdca4]">

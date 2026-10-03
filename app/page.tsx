@@ -1,8 +1,10 @@
 'use client';
 
-import { useState } from 'react';
+import { useContext, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
+import toast from 'react-hot-toast';
+import { CantonWalletContext } from '@/components/CantonWalletProvider';
 import { useTradeStore, TrustPassportData } from '@/lib/services/tradeStore';
 import { TrustPassportModal } from '@/components/TrustPassportModal';
 import { ConnectWalletModal } from '@/components/ConnectWalletModal';
@@ -11,6 +13,7 @@ import {
     IconBuilding,
     IconBank,
     IconArrowRight,
+    IconCopy,
 } from '@/components/Icons';
 
 export default function Home() {
@@ -18,12 +21,44 @@ export default function Home() {
     const store = useTradeStore();
     const invoices = store.getInvoices();
     const currentProfile = store.getCurrentProfile();
+    const currentParty = store.getCurrentParty();
+    const { disconnectWallet, walletBalance, walletBalanceLoading, walletNetwork } = useContext(CantonWalletContext);
 
     const [selectedPassport, setSelectedPassport] = useState<TrustPassportData | null>(null);
     const [isWalletModalOpen, setIsWalletModalOpen] = useState(false);
 
     const demoInvoice = invoices[0]?.payload;
     const demoPassport = demoInvoice ? store.getTrustPassport(demoInvoice.invoiceId) : null;
+
+    const handleWalletButtonClick = async () => {
+        if (!currentParty) {
+            setIsWalletModalOpen(true);
+            return;
+        }
+
+        try {
+            await disconnectWallet();
+            setIsWalletModalOpen(false);
+        } catch (error) {
+            toast.error(error instanceof Error ? error.message : 'Unable to disconnect wallet.');
+        }
+    };
+
+    const handleLandingConnect = async (partyId: string) => {
+        await store.connectParty(partyId);
+        store.setPendingRegistrationType('commercial');
+        router.push('/register');
+    };
+
+    const handleCopyWallet = async () => {
+        if (!currentParty) return;
+        try {
+            await navigator.clipboard.writeText(currentParty);
+            toast.success('Wallet address copied.');
+        } catch {
+            toast.error('Unable to copy wallet address.');
+        }
+    };
 
     return (
         <div className="flex flex-col min-h-screen bg-[#FDF4D2] text-[#092328] font-sans selection:bg-[#76C457] selection:text-[#092328] overflow-x-hidden">
@@ -70,16 +105,39 @@ export default function Home() {
                         )}
                     </nav>
 
+                    {currentParty && (
+                        <div className="hidden items-center gap-1.5 text-[10px] font-bold text-gray-200 sm:flex">
+                            <span className="rounded-md border border-[#1f5763] bg-[#0f3942] px-2 py-1 uppercase text-[#76C457]">
+                                {walletNetwork ?? 'unknown'}
+                            </span>
+                            <span className="max-w-[110px] truncate rounded-md border border-[#1f5763] bg-[#0f3942] px-2 py-1">
+                                {walletBalanceLoading ? 'Balance...' : walletBalance ?? 'Balance unavailable'}
+                            </span>
+                        </div>
+                    )}
+
                     {/* Party Connection / Profile Button */}
                     <button
-                        onClick={() => !currentProfile ? setIsWalletModalOpen(true) : null}
+                        onClick={() => { void handleWalletButtonClick(); }}
                         className="bg-[#76C457] hover:bg-[#67b049] text-[#092328] font-black text-xs px-3.5 py-1.5 rounded-md shadow-sm transition-all flex items-center gap-1.5 cursor-pointer"
                     >
-                        <span className={`w-2 h-2 rounded-full ${currentProfile ? 'bg-[#092328]' : 'bg-[#092328] animate-pulse'}`}></span>
+                        <span className={`w-2 h-2 rounded-full ${currentParty ? 'bg-[#092328]' : 'bg-[#092328] animate-pulse'}`}></span>
                         <span className="truncate max-w-[100px] sm:max-w-[130px]">
-                            {currentProfile ? (currentProfile.isVerified ? currentProfile.companyName : 'Wallet Connected') : 'Connect Wallet'}
+                            {currentProfile ? (currentProfile.isVerified ? currentProfile.companyName : 'Wallet Connected') : currentParty ? 'Wallet Connected' : 'Connect Wallet'}
                         </span>
                     </button>
+
+                    {currentParty && (
+                        <button
+                            type="button"
+                            onClick={() => { void handleCopyWallet(); }}
+                            title="Copy wallet address"
+                            aria-label="Copy wallet address"
+                            className="flex h-8 w-8 cursor-pointer items-center justify-center rounded-md border border-[#1f5763] bg-[#0f3942] text-[#76C457] transition-colors hover:bg-[#174b55]"
+                        >
+                            <IconCopy className="h-3.5 w-3.5" />
+                        </button>
+                    )}
                 </header>
             </div>
 
@@ -405,7 +463,7 @@ export default function Home() {
                 isOpen={isWalletModalOpen}
                 onClose={() => setIsWalletModalOpen(false)}
                 currentParty={store.getCurrentParty() || 'Not Connected'}
-                onSelectParty={(partyId) => store.connectParty(partyId)}
+                onSelectParty={handleLandingConnect}
             />
 
             {/* Footer */}

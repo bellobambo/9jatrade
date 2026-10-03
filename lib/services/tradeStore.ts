@@ -11,12 +11,49 @@ import { CANTON_CONFIG } from '../canton/config';
 
 type LedgerContract<T> = { contractId: string; templateId: string; payload: T };
 
+const LEDGER_TEMPLATES = [
+  'Registration:CompanyProfile',
+  'Registration:RegistrationRequest',
+  'Invoice:Invoice',
+  'Invoice:BuyerConfirmation',
+  'Invoice:DeliveryConfirmation',
+  'Financing:FinancingRequest',
+  'Financing:FinancingOffer',
+  'Financing:FinancingAgreement',
+  'Financing:SettlementRecord',
+] as const;
+
+function damlTemplateId(template: string) {
+  return `${CANTON_CONFIG.packageId}:${template}`;
+}
+
+function loopTemplateId(template: string) {
+  return CANTON_CONFIG.packageName ? `#${CANTON_CONFIG.packageName}:${template}` : damlTemplateId(template);
+}
+
+function activeContractsBody(party: string, templateId: string, includeTopLevelTemplateId = false) {
+  return {
+    ...(includeTopLevelTemplateId ? { templateId } : {}),
+    filter: {
+      filtersByParty: {
+        [party]: {
+          inclusive: { templateFilters: [{ templateId }] },
+        },
+      },
+    },
+    verbose: true,
+  };
+}
+
 function ledgerContracts(value: unknown, result: LedgerContract<Record<string, unknown>>[] = []) {
   if (Array.isArray(value)) value.forEach((item) => ledgerContracts(item, result));
   else if (value && typeof value === 'object') {
     const record = value as Record<string, unknown>;
-    if (typeof record.contractId === 'string' && typeof record.templateId === 'string' && record.createArgument && typeof record.createArgument === 'object') {
-      result.push({ contractId: record.contractId, templateId: record.templateId, payload: record.createArgument as Record<string, unknown> });
+    const contractId = typeof record.contractId === 'string' ? record.contractId : record.contract_id;
+    const templateId = typeof record.templateId === 'string' ? record.templateId : record.template_id;
+    const payload = record.createArgument ?? record.create_arguments ?? record.payload;
+    if (typeof contractId === 'string' && typeof templateId === 'string' && payload && typeof payload === 'object') {
+      result.push({ contractId, templateId, payload: payload as Record<string, unknown> });
     }
     Object.values(record).forEach((item) => ledgerContracts(item, result));
   }
@@ -60,6 +97,7 @@ class TradeStateStore {
   private error: string | null = null;
   private restoring: Promise<void> | null = null;
   private walletEventsInitialized = false;
+  private activeWalletId: string | null = null;
 
   subscribe(listener: () => void) { this.listeners.add(listener); return () => { this.listeners.delete(listener); }; }
   private notify() { this.listeners.forEach((listener) => listener()); }
@@ -69,6 +107,7 @@ class TradeStateStore {
   setPendingRegistrationType(type: 'commercial' | 'financier') { this.pendingRegistrationType = type; this.notify(); }
   getError() { return this.error; }
   isLoading() { return this.loading; }
+  private isLoopWallet() { return Boolean(this.activeWalletId?.toLowerCase().includes('loop')); }
 
   initialize() {
     if (this.walletEventsInitialized) return;
@@ -80,19 +119,29 @@ class TradeStateStore {
 
   async connectParty(party: string) {
     this.loading = true; this.error = null; this.notify();
+    let verifiedWalletId: string | null = null;
     try {
       const session = await getCantonClient().getActiveSession();
       if (!session || session.partyId !== party) throw new Error('Connect this party through a Canton wallet first.');
+      verifiedWalletId = String(session.walletId);
+      this.activeWalletId = verifiedWalletId;
       this.connectedParty = party;
       this.profile = null;
       this.contracts = [];
       await this.refresh();
       if (this.error) throw new Error(this.error);
     } catch (error) {
-      this.connectedParty = null;
+      if (verifiedWalletId) {
+        this.connectedParty = party;
+        this.activeWalletId = verifiedWalletId;
+      } else {
+        this.connectedParty = null;
+        this.activeWalletId = null;
+      }
       this.profile = null;
       this.contracts = [];
       this.error = error instanceof Error ? error.message : 'Unable to connect this Canton party.';
+      if (verifiedWalletId) return;
       throw error;
     } finally {
       this.loading = false; this.notify();
@@ -115,6 +164,7 @@ class TradeStateStore {
 
   disconnectParty() {
     this.connectedParty = null;
+    this.activeWalletId = null;
     this.profile = null;
     this.contracts = [];
     this.error = null;
@@ -127,23 +177,9 @@ class TradeStateStore {
     try {
       const session = await getCantonClient().getActiveSession();
       if (!session || session.partyId !== this.connectedParty) throw new Error('The Canton wallet session is disconnected or has changed parties.');
-      const ledgerEnd = await getCantonClient().ledgerApi({ requestMethod: 'POST', resource: '/v2/state/ledger-end' });
-      const ledgerEndBody = this.parseLedgerResponse(ledgerEnd) as Record<string, unknown>;
-      const offset = ledgerEndBody.offset ?? ledgerEndBody.ledgerEnd;
-      if (offset === undefined) throw new Error('Canton did not return a ledger offset.');
-      const activeContracts = await getCantonClient().ledgerApi({
-        requestMethod: 'POST',
-        resource: '/v2/state/active-contracts',
-        body: {
-          activeAtOffset: offset,
-          eventFormat: {
-            filtersByParty: { [this.connectedParty]: { cumulative: [{ identifierFilter: { WildcardFilter: { value: { includeCreatedEventBlob: false } } } }] } },
-            verbose: true,
-          },
-          verbose: true,
-        },
-      });
-      this.contracts = ledgerContracts(this.parseLedgerResponse(activeContracts));
+      this.activeWalletId = String(session.walletId);
+      const party = this.connectedParty;
+      this.contracts = await this.readActiveContracts(party);
       const ledgerProfile = this.contracts.find((contract) => contract.templateId.endsWith(':Registration:CompanyProfile') && contract.payload.companyParty === this.connectedParty);
       this.profile = ledgerProfile ? asPayload<CompanyProfilePayload>(ledgerProfile).payload : null;
     } catch (error) {
@@ -153,6 +189,72 @@ class TradeStateStore {
     } finally {
       this.loading = false; this.notify();
     }
+  }
+
+  private async readActiveContracts(party: string) {
+    if (this.isLoopWallet()) {
+      return this.readLoopActiveContracts(party);
+    }
+
+    try {
+      const filteredContracts = await this.readTemplateActiveContracts(party, damlTemplateId);
+      if (filteredContracts.length > 0) return filteredContracts;
+      try {
+        return await this.readUnfilteredActiveContracts();
+      } catch {
+        return filteredContracts;
+      }
+    } catch (error) {
+      try {
+        return await this.readUnfilteredActiveContracts();
+      } catch {
+        throw error;
+      }
+    }
+  }
+
+  private async readTemplateActiveContracts(party: string, templateIdFor: (template: string) => string) {
+    const contractResults = await Promise.all(LEDGER_TEMPLATES.map((template) => getCantonClient().ledgerApi({
+      requestMethod: 'POST',
+      resource: '/v2/state/acs',
+      body: activeContractsBody(party, templateIdFor(template)),
+    })));
+    return contractResults.flatMap((activeContracts) => ledgerContracts(this.parseLedgerResponse(activeContracts)));
+  }
+
+  private async readLoopActiveContracts(party: string) {
+    const contracts: LedgerContract<Record<string, unknown>>[] = [];
+    const failures: { template: string; templateId: string; message: string }[] = [];
+
+    for (const template of LEDGER_TEMPLATES) {
+      const templateId = loopTemplateId(template);
+      try {
+        const activeContracts = await getCantonClient().ledgerApi({
+          requestMethod: 'POST',
+          resource: '/v2/state/acs',
+          body: JSON.stringify(activeContractsBody(party, templateId, true)),
+        });
+        contracts.push(...ledgerContracts(this.parseLedgerResponse(activeContracts)));
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        failures.push({ template, templateId, message });
+      }
+    }
+
+    if (contracts.length === 0 && failures.length > 0) {
+      const firstFailure = failures[0];
+      console.warn(`Loop connected, but it could not read 9jaTrade contracts. Confirm the ${CANTON_CONFIG.packageName || 'configured'} DAR is deployed on ${CANTON_CONFIG.network} and that Loop supports ACS reads for this custom template. First failed query: ${firstFailure.templateId} (${firstFailure.template}). ${firstFailure.message}`);
+    }
+
+    return contracts;
+  }
+
+  private async readUnfilteredActiveContracts() {
+    const activeContracts = await getCantonClient().ledgerApi({
+      requestMethod: 'GET',
+      resource: '/v2/state/acs/active-contracts',
+    });
+    return ledgerContracts(this.parseLedgerResponse(activeContracts));
   }
 
   private byTemplate<T>(suffix: string) { return this.contracts.filter((contract) => contract.templateId.endsWith(suffix)).map(asPayload<T>); }
@@ -202,29 +304,24 @@ class TradeStateStore {
     if (!session || session.partyId !== this.connectedParty) throw new Error('Connect a Canton wallet before submitting commands.');
     if (body.actingParty !== session.partyId) throw new Error('Canton commands must be submitted by the connected wallet party.');
     const template = String(body.template || '');
-    const templateId = `${CANTON_CONFIG.packageId}:${template}`;
+    const templateId = damlTemplateId(template);
     const payload = body.payload && typeof body.payload === 'object' ? body.payload as Record<string, unknown> : {};
     const command = body.kind === 'create'
       ? { CreateCommand: { templateId, createArguments: ledgerValue(payload) } }
       : { ExerciseCommand: { templateId, contractId: body.contractId, choice: body.choice, choiceArgument: ledgerValue(payload) } };
     if (body.kind !== 'create' && body.kind !== 'exercise') throw new Error('Unsupported Canton command.');
-    const provider = getCantonClient().asProvider();
     const params = { commands: [command], commandId: crypto.randomUUID() };
-    try {
-      return await provider.request({ method: 'prepareExecuteAndWait', params });
-    } catch (error) {
-      const code = error && typeof error === 'object' && 'code' in error ? (error as { code: unknown }).code : null;
-      if (code !== -32601 && code !== 4200) throw error;
-      return provider.request({ method: 'prepareExecute', params });
-    }
+    return getCantonClient().submitTransaction({ signedTx: params });
   }
 
   async createRegistrationRequest(data: { applicantParty: string; companyName: string; businessLocation: string; cacOrRegistrationNumber: string; requestedRole: CompanyRole; roleCode: number }) {
     if (data.applicantParty !== this.connectedParty) throw new Error('Connect the applicant Canton party before submitting registration.');
     if (!CANTON_CONFIG.operatorParty) throw new Error('NEXT_PUBLIC_CANTON_OPERATOR_PARTY is not configured.');
-    await this.command({ kind: 'create', actingParty: data.applicantParty, template: 'Registration:RegistrationRequest', payload: { ...data, operator: CANTON_CONFIG.operatorParty } });
+    const requestPayload = { ...data, operator: CANTON_CONFIG.operatorParty };
+    await this.command({ kind: 'create', actingParty: data.applicantParty, template: 'Registration:RegistrationRequest', payload: requestPayload });
     await this.refresh();
     const request = this.getRegistrationRequests().find(({ payload }) => payload.applicantParty === data.applicantParty && payload.companyName === data.companyName);
+    if (!request && this.isLoopWallet()) return { request: requestPayload };
     if (!request) throw new Error('The registration request was submitted but is not visible to the connected party.');
     return { request: request.payload };
   }

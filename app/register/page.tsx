@@ -2,6 +2,7 @@
 
 import { useState } from 'react';
 import Link from 'next/link';
+import toast from 'react-hot-toast';
 import { Navbar } from '@/components/Navbar';
 import { useTradeStore } from '@/lib/services/tradeStore';
 import { CompanyRole } from '@/lib/canton/types';
@@ -33,11 +34,10 @@ export default function RegisterPage() {
   const [finCac, setFinCac] = useState('');
 
   const [isSubmitting, setIsSubmitting] = useState(false);
-  const [notification, setNotification] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
 
   const showToast = (message: string, type: 'success' | 'error' = 'success') => {
-    setNotification({ message, type });
-    setTimeout(() => setNotification(null), 5000);
+    if (type === 'error') toast.error(message);
+    else toast.success(message);
   };
 
   const handleCommercialSubmit = async (e: React.FormEvent) => {
@@ -104,17 +104,6 @@ export default function RegisterPage() {
   return (
     <div className="flex flex-col min-h-screen bg-[#FDF4D2] text-[#092328] font-sans">
       <Navbar />
-
-      {/* Notifications */}
-      {notification && (
-        <div className={`fixed bottom-5 right-5 z-50 px-5 py-3.5 rounded-2xl shadow-xl border text-sm flex items-center gap-3 transition-all ${notification.type === 'success'
-          ? 'bg-[#092328] text-[#76C457] border-[#13444e]'
-          : 'bg-red-950 text-red-200 border-red-800'
-          }`}>
-          <span className="font-medium">{notification.message}</span>
-          <button onClick={() => setNotification(null)} className="opacity-70 hover:opacity-100 font-bold ml-2">✕</button>
-        </div>
-      )}
 
       {/* Main Registration Container */}
       <main className="max-w-2xl mx-auto px-4 sm:px-6 lg:px-8 py-10 w-full flex-1">

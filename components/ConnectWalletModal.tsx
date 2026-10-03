@@ -1,11 +1,13 @@
 'use client';
 
-import { useEffect, useState } from 'react';
-import Link from 'next/link';
+import { useContext, useEffect, useMemo, useState } from 'react';
 import type { WalletInfo } from '@partylayer/sdk';
+import toast from 'react-hot-toast';
 import { IconLock } from '@/components/Icons';
-import { CANTON_CONFIG } from '@/lib/canton/config';
+import { CantonWalletContext } from '@/components/CantonWalletProvider';
 import { getCantonClient } from '@/lib/canton/client';
+
+const REQUIRED_CAPABILITIES = ['submitTransaction', 'ledgerApi'] as const;
 
 interface ConnectWalletModalProps {
   isOpen: boolean;
@@ -20,26 +22,44 @@ export function ConnectWalletModal({
   currentParty,
   onSelectParty,
 }: ConnectWalletModalProps) {
-  const [wallets, setWallets] = useState<WalletInfo[]>([]);
-  const [loadingWallets, setLoadingWallets] = useState(true);
+  const { wallets, detectingWallets, refreshWallets } = useContext(CantonWalletContext);
   const [connecting, setConnecting] = useState(false);
   const [statusMsg, setStatusMsg] = useState('');
+  const [showOtherWallets, setShowOtherWallets] = useState(false);
 
   useEffect(() => {
     if (!isOpen) return;
     let active = true;
-    getCantonClient().listWallets()
-      .then((availableWallets) => {
-        if (active) setWallets(availableWallets.filter((wallet) => wallet.networks.includes(CANTON_CONFIG.network)));
-      })
+    refreshWallets()
+      .then(() => { if (active) setStatusMsg(''); })
       .catch((error: unknown) => {
-        if (active) setStatusMsg(error instanceof Error ? error.message : 'Unable to discover Canton wallets.');
-      })
-      .finally(() => {
-        if (active) setLoadingWallets(false);
+        const message = error instanceof Error ? error.message : 'Unable to discover Canton wallets.';
+        if (active) {
+          setStatusMsg(message);
+          toast.error(message);
+        }
       });
     return () => { active = false; };
-  }, [isOpen]);
+  }, [isOpen, refreshWallets]);
+
+  const { primaryWallets, otherWallets } = useMemo(() => {
+    const priority = (wallet: WalletInfo) => {
+      const name = wallet.name.toLowerCase();
+      if (name.includes('console')) return 0;
+      if (name.includes('loop')) return 1;
+      return 2;
+    };
+    const orderedWallets = [...wallets].sort((first, second) => {
+      const priorityDiff = priority(first) - priority(second);
+      return priorityDiff || first.name.localeCompare(second.name);
+    });
+    const preferred = orderedWallets.filter((wallet) => priority(wallet) < 2);
+    const fallback = orderedWallets.filter((wallet) => priority(wallet) === 2);
+    return {
+      primaryWallets: preferred.length > 0 ? preferred : orderedWallets.slice(0, 2),
+      otherWallets: preferred.length > 0 ? fallback : orderedWallets.slice(2),
+    };
+  }, [wallets]);
 
   if (!isOpen) return null;
 
@@ -49,17 +69,54 @@ export function ConnectWalletModal({
       setStatusMsg('Approve the connection request in your wallet.');
       const session = await getCantonClient().connect({
         walletId,
-        requiredCapabilities: ['submitTransaction', 'ledgerApi'],
+        requiredCapabilities: [...REQUIRED_CAPABILITIES],
       });
       await onSelectParty(session.partyId);
       setStatusMsg('');
       onClose();
     } catch (error) {
-      setStatusMsg(error instanceof Error ? error.message : 'Unable to connect the Canton wallet.');
+      const message = error instanceof Error ? error.message : 'Unable to connect the Canton wallet.';
+      setStatusMsg(message);
+      toast.error(message);
     } finally {
       setConnecting(false);
     }
   };
+
+  const getWalletIcon = (wallet: WalletInfo) => {
+    const announcedIcon = (wallet as WalletInfo & { icon?: string }).icon;
+    return wallet.icons.md || wallet.icons.sm || wallet.icons.lg || announcedIcon || '';
+  };
+
+  const renderWalletButton = (wallet: WalletInfo, compact = false) => (
+    <button
+      key={wallet.walletId}
+      type="button"
+      onClick={() => handleConnect(wallet.walletId)}
+      disabled={connecting}
+      className={`flex w-full cursor-pointer items-center gap-3 rounded-xl border border-[#ebdca4] bg-[#fffdf5] text-left transition-colors hover:border-[#76C457] disabled:cursor-not-allowed disabled:opacity-50 ${compact ? 'p-2.5' : 'p-3.5'}`}
+    >
+      <span className="flex h-9 w-9 shrink-0 items-center justify-center overflow-hidden rounded-lg border border-[#ebdca4] bg-white">
+        {getWalletIcon(wallet) ? (
+          // eslint-disable-next-line @next/next/no-img-element
+          <img
+            src={getWalletIcon(wallet)}
+            alt={`${wallet.name} icon`}
+            className="h-full w-full object-contain p-1"
+          />
+        ) : (
+          <span className="text-sm font-black text-[#092328]">{wallet.name.slice(0, 1).toUpperCase()}</span>
+        )}
+      </span>
+      <span className="min-w-0 flex-1">
+        <span className="block truncate text-sm font-bold text-[#092328]">{wallet.name}</span>
+        {!compact && (
+          <span className="block text-xs text-[#092328]/65">Signs as the active Canton party in this wallet</span>
+        )}
+      </span>
+      <span className="text-xs font-bold text-[#2b6819]">{connecting ? 'Connecting...' : 'Connect'}</span>
+    </button>
+  );
 
   return (
     <div className="fixed inset-0 z-50 bg-[#092328]/70 backdrop-blur-xs flex items-center justify-center p-4 animate-fade-in font-sans">
@@ -73,71 +130,62 @@ export function ConnectWalletModal({
             </div>
             <div>
               <h3 className="text-xl font-extrabold text-[#092328]">Connect Canton Party</h3>
-              <p className="text-xs text-[#092328]/70">Connect an allocated Canton account on DevNet</p>
+              <p className="text-xs text-[#092328]/70">Use the wallet that can act as your demo party</p>
             </div>
           </div>
           <button
             onClick={onClose}
-            className="text-[#092328]/60 hover:text-[#092328] w-8 h-8 rounded-lg flex items-center justify-center hover:bg-[#ebdca4]/50 transition-colors"
+            className="text-[#092328]/60 hover:text-[#092328] w-8 h-8 rounded-lg flex cursor-pointer items-center justify-center hover:bg-[#ebdca4]/50 transition-colors"
           >
             ✕
           </button>
         </div>
 
-        {/* Register New Company Callout */}
-        <div className="mt-5 p-4 rounded-xl bg-[#f0e3b9] border border-[#ebdca4] flex items-center justify-between gap-3">
-          <div>
-            <span className="font-extrabold text-sm text-[#092328] block">New to 9jaTrade?</span>
-            <span className="text-xs text-[#092328]/70 block mt-0.5">
-              Submit your company application to become an authorized Supplier, Buyer, or Financier.
-            </span>
-          </div>
-          <Link
-            href="/register"
-            onClick={onClose}
-            className="bg-[#76C457] hover:bg-[#67b049] text-[#092328] font-black text-xs px-4 py-2.5 rounded-xl shadow-xs shrink-0 transition-colors"
-          >
-            Register →
-          </Link>
-        </div>
-
         <div className="mt-5 space-y-3">
-          <p className="text-sm font-bold text-[#092328]">
-            {currentParty !== 'Not Connected' ? `Connected party: ${currentParty}` : 'Choose a Canton wallet'}
-          </p>
-          {loadingWallets ? (
+          {currentParty !== 'Not Connected' && (
+            <div className="rounded-xl border border-[#ebdca4] bg-[#f0e3b9] p-3 text-xs text-[#092328]/75">
+              <span className="font-bold text-[#092328]">Current party:</span>{' '}
+              <span className="break-all font-mono font-bold text-[#092328]">{currentParty}</span>
+            </div>
+          )}
+
+          {detectingWallets ? (
             <p className="py-6 text-center text-xs text-[#092328]/70">Searching for DevNet wallets...</p>
           ) : wallets.length > 0 ? (
-            <div className="max-h-64 space-y-2 overflow-y-auto">
-              {wallets.map((wallet) => (
-                <button
-                  key={wallet.walletId}
-                  type="button"
-                  onClick={() => handleConnect(wallet.walletId)}
-                  disabled={connecting}
-                  className="flex w-full items-center gap-3 border border-[#ebdca4] bg-[#fffdf5] p-3 text-left transition-colors hover:border-[#76C457] disabled:opacity-50"
-                >
-                  <span className="flex h-8 w-8 shrink-0 items-center justify-center bg-[#092328] text-sm font-black text-[#76C457]">
-                    {wallet.name.slice(0, 1).toUpperCase()}
-                  </span>
-                  <span className="min-w-0 flex-1">
-                    <span className="block truncate text-sm font-bold text-[#092328]">{wallet.name}</span>
-                    <span className="block text-xs text-[#092328]/65">DevNet · signed commands and ledger reads required</span>
-                  </span>
-                  <span className="text-xs font-bold text-[#2b6819]">{connecting ? 'Connecting...' : 'Connect'}</span>
-                </button>
-              ))}
+            <div className="space-y-3">
+              <div className="space-y-2">
+                {primaryWallets.map((wallet) => renderWalletButton(wallet))}
+              </div>
+
+              {otherWallets.length > 0 && (
+                <div className="border-t border-[#ebdca4] pt-3">
+                  <button
+                    type="button"
+                    onClick={() => setShowOtherWallets((value) => !value)}
+                    className="flex w-full cursor-pointer items-center justify-between text-xs font-bold text-[#092328]/70 hover:text-[#092328]"
+                  >
+                    <span>{showOtherWallets ? 'Hide other wallets' : `Show other wallets (${otherWallets.length})`}</span>
+                    <span>{showOtherWallets ? '−' : '+'}</span>
+                  </button>
+                  {showOtherWallets && (
+                    <div className="mt-2 max-h-44 space-y-2 overflow-y-auto rounded-xl">
+                      {otherWallets.map((wallet) => renderWalletButton(wallet, true))}
+                    </div>
+                  )}
+                </div>
+              )}
+
             </div>
           ) : (
             <p className="border border-[#ebdca4] bg-[#fffdf5] p-4 text-xs text-[#092328]/70">
-              No compatible DevNet wallet was found. Install a wallet that supports Canton DevNet, Ledger API reads, and transaction submission.
+              No DevNet signing wallet was found. Unlock Nightly, set it to Canton DevNet, then refresh this page.
             </p>
           )}
         </div>
 
         {/* Status Message */}
         {statusMsg && (
-          <div className="mt-3 p-2.5 bg-[#f0e3b9] rounded-xl text-xs text-[#092328] font-mono text-center border border-[#ebdca4]">
+          <div className="mt-3 max-h-28 overflow-y-auto break-words rounded-xl border border-[#ebdca4] bg-[#f0e3b9] p-2.5 text-center font-mono text-xs text-[#092328]">
             {statusMsg}
           </div>
         )}
