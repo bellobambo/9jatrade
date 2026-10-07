@@ -705,7 +705,7 @@ export default function UnifiedTradeDashboard() {
                           Commercial Items & Supporting Documents:
                         </span>
                         <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 text-gray-700">
-                          {inv.items.map((item, idx) => (
+                          {(inv.items as import('@/lib/canton/types').InvoiceItem[]).map((item, idx: number) => (
                             <div key={idx} className="bg-[#f6e9bc] p-3 rounded-xl border border-[#ebdca4]">
                               <span className="font-bold text-[#092328] block truncate">{item.description}</span>
                               <div className="flex justify-between text-[11px] text-[#092328]/70 mt-1">
@@ -1212,7 +1212,7 @@ export default function UnifiedTradeDashboard() {
                 <input
                   type="number"
                   min={0}
-                  max={activeOfferRequest ? activeOfferRequest.invoiceAmount - fundingAmount : undefined}
+                  max={activeOfferRequest ? activeOfferRequest.invoiceAmount - Number(fundingAmount) : undefined}
                   value={financingFee}
                   onChange={e => setFinancingFee(Number(e.target.value))}
                   className="w-full border border-[#ebdca4] bg-[#fffdf5] rounded-xl p-3 text-base font-extrabold text-[#2b6819]"
