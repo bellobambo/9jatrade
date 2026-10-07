@@ -782,9 +782,20 @@ export default function UnifiedTradeDashboard() {
                       {currentProfile.role === 'FinancierRole' && agree.financier === currentParty && !agree.isFunded && !agree.isSettled && (
                         <button
                           onClick={() => handleMarkFunded(agree.agreementId)}
-                          className="w-full bg-[#76C457] hover:bg-[#67b049] text-[#092328] font-black py-3 rounded-xl text-xs shadow-xs transition-colors cursor-pointer"
+                          disabled={isMarkingFunded}
+                          className="w-full bg-[#76C457] hover:bg-[#67b049] disabled:opacity-60 disabled:cursor-not-allowed text-[#092328] font-black py-3 rounded-xl text-xs shadow-xs transition-colors cursor-pointer flex items-center justify-center gap-1.5"
                         >
-                          Disburse Capital (Mark as Funded)
+                          {isMarkingFunded ? (
+                            <>
+                              <svg className="animate-spin h-3.5 w-3.5 text-[#092328]" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+                              </svg>
+                              Disbursing…
+                            </>
+                          ) : (
+                            'Disburse Capital (Mark as Funded)'
+                          )}
                         </button>
                       )}
 
