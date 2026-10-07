@@ -56,6 +56,7 @@ export default function UnifiedTradeDashboard() {
     return agreement.financier === currentParty;
   });
   const [selectedPassport, setSelectedPassport] = useState<TrustPassportData | null>(null);
+  const [currentPage, setCurrentPage] = useState(1);
 
   // Modals state
   const [showCreateModal, setShowCreateModal] = useState(false);
@@ -270,8 +271,35 @@ export default function UnifiedTradeDashboard() {
     ? store.getTrustPassport(settlingInvoiceItem.payload.invoiceId)?.activeAgreement
     : null;
 
+  // Deduplicate invoices by ID, keeping the most advanced status
+  const statusRank: Record<string, number> = {
+    'InvoiceDraft': 1,
+    'InvoiceSubmitted': 2,
+    'InvoiceRejected': 3,
+    'InvoiceDisputed': 4,
+    'InvoiceConfirmed': 5,
+    'InvoiceDelivered': 6,
+    'InvoiceFinanced': 7,
+    'InvoiceSettled': 8
+  };
+
+  const uniqueInvoicesMap = new Map();
+  for (const inv of invoices) {
+    const existing = uniqueInvoicesMap.get(inv.payload.invoiceId);
+    if (!existing) {
+      uniqueInvoicesMap.set(inv.payload.invoiceId, inv);
+    } else {
+      const existingRank = statusRank[existing.payload.status] || 0;
+      const currentRank = statusRank[inv.payload.status] || 0;
+      if (currentRank > existingRank) {
+        uniqueInvoicesMap.set(inv.payload.invoiceId, inv);
+      }
+    }
+  }
+  const uniqueInvoices = Array.from(uniqueInvoicesMap.values());
+
   // Filter invoices according to tab
-  const displayedInvoices = invoices.filter(({ payload: inv }) => {
+  const filteredInvoices = uniqueInvoices.filter(({ payload: inv }) => {
     if (selectedTab === 'all') return true;
     if (selectedTab === 'supplier') {
       return currentProfile?.role === 'SupplierRole' && inv.supplier === currentParty;
@@ -290,6 +318,20 @@ export default function UnifiedTradeDashboard() {
     }
     return true;
   });
+
+  const sortedInvoices = [...filteredInvoices].sort((a, b) => {
+    const timeA = new Date(a.payload.issueDate).getTime();
+    const timeB = new Date(b.payload.issueDate).getTime();
+    if (timeA === timeB || isNaN(timeA) || isNaN(timeB)) {
+      // Fallback to sorting by invoice ID to guarantee a stable, predictable order
+      return b.payload.invoiceId.localeCompare(a.payload.invoiceId);
+    }
+    return timeB - timeA;
+  });
+
+  const ITEMS_PER_PAGE = 10;
+  const totalPages = Math.max(1, Math.ceil(sortedInvoices.length / ITEMS_PER_PAGE));
+  const displayedInvoices = sortedInvoices.slice((currentPage - 1) * ITEMS_PER_PAGE, currentPage * ITEMS_PER_PAGE);
 
   return (
     <div className="flex flex-col min-h-screen bg-[#FDF4D2] text-[#092328] font-sans">
@@ -342,7 +384,7 @@ export default function UnifiedTradeDashboard() {
           {/* Unified Role Segmented Pill Bar */}
           <div className="flex items-center gap-2 mt-6 overflow-x-auto pb-2">
             {!currentProfile && <button
-              onClick={() => setActiveTab('all')}
+              onClick={() => { setActiveTab('all'); setCurrentPage(1); }}
               className={`px-4 py-2 rounded-xl text-xs sm:text-sm font-extrabold transition-all cursor-pointer whitespace-nowrap flex items-center gap-2 ${selectedTab === 'all'
                 ? 'bg-[#092328] text-white shadow-xs'
                 : 'bg-[#f0e3b9] text-[#092328]/70 hover:text-[#092328]'
@@ -353,7 +395,7 @@ export default function UnifiedTradeDashboard() {
             </button>}
 
             {(!currentProfile || currentProfile.role === 'SupplierRole') && <button
-              onClick={() => setActiveTab('supplier')}
+              onClick={() => { setActiveTab('supplier'); setCurrentPage(1); }}
               className={`px-4 py-2 rounded-xl text-xs sm:text-sm font-extrabold transition-all cursor-pointer whitespace-nowrap flex items-center gap-2 ${selectedTab === 'supplier'
                 ? 'bg-[#092328] text-[#76C457] shadow-xs'
                 : 'bg-[#f0e3b9] text-[#092328]/70 hover:text-[#092328]'
@@ -364,7 +406,7 @@ export default function UnifiedTradeDashboard() {
             </button>}
 
             {(!currentProfile || currentProfile.role === 'BuyerRole') && <button
-              onClick={() => setActiveTab('buyer')}
+              onClick={() => { setActiveTab('buyer'); setCurrentPage(1); }}
               className={`px-4 py-2 rounded-xl text-xs sm:text-sm font-extrabold transition-all cursor-pointer whitespace-nowrap flex items-center gap-2 ${selectedTab === 'buyer'
                 ? 'bg-[#092328] text-[#76C457] shadow-xs'
                 : 'bg-[#f0e3b9] text-[#092328]/70 hover:text-[#092328]'
@@ -375,7 +417,7 @@ export default function UnifiedTradeDashboard() {
             </button>}
 
             {(!currentProfile || currentProfile.role === 'FinancierRole') && <button
-              onClick={() => setActiveTab('financier')}
+              onClick={() => { setActiveTab('financier'); setCurrentPage(1); }}
               className={`px-4 py-2 rounded-xl text-xs sm:text-sm font-extrabold transition-all cursor-pointer whitespace-nowrap flex items-center gap-2 ${selectedTab === 'financier'
                 ? 'bg-[#092328] text-[#76C457] shadow-xs'
                 : 'bg-[#f0e3b9] text-[#092328]/70 hover:text-[#092328]'
@@ -678,6 +720,29 @@ export default function UnifiedTradeDashboard() {
                     </div>
                   );
                 })}
+              </div>
+            )}
+            
+            {/* Pagination Controls */}
+            {totalPages > 0 && (
+              <div className="flex items-center justify-between mt-6 bg-[#fffdf5] border border-[#ebdca4] rounded-2xl p-4">
+                <button
+                  onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
+                  disabled={currentPage === 1}
+                  className="px-4 py-2 text-sm font-bold text-[#092328] bg-[#f0e3b9] rounded-xl hover:bg-[#ebdca4] disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                >
+                  Previous
+                </button>
+                <span className="text-sm font-bold text-[#092328]/70">
+                  Page {currentPage} of {totalPages}
+                </span>
+                <button
+                  onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}
+                  disabled={currentPage === totalPages}
+                  className="px-4 py-2 text-sm font-bold text-[#092328] bg-[#f0e3b9] rounded-xl hover:bg-[#ebdca4] disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                >
+                  Next
+                </button>
               </div>
             )}
 
