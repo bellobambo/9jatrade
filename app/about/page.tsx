@@ -172,7 +172,7 @@ export default function AboutPage() {
                 Real Trade First. Financing Second.
               </h2>
               <p className="text-sm sm:text-base text-gray-300 leading-relaxed mb-4">
-                Traditional factoring suffers from fraud because lenders underwrite unverified paper, or rogue suppliers pledge the same PDF to multiple banks. DeFi protocols fail because businesses refuse to leak their customer names and prices on public blockchains.
+                Traditional factoring suffers from fraud because lenders underwrite unverified paper, or rogue suppliers pledge the same Files to multiple banks. DeFi protocols fail because businesses refuse to leak their customer names and prices on public blockchains.
               </p>
               <p className="text-sm sm:text-base text-gray-300 leading-relaxed">
                 <strong className="text-[#76C457]">9jaTrade fixes this:</strong> Financing is only unlocked after the buyer confirms the obligation and certifies goods delivery. Once funded, the invoice is locked cryptographically so it cannot ever be pledged twice.
