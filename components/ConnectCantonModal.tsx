@@ -83,7 +83,7 @@ export function ConnectCantonModal({ isOpen, onClose, currentParty, onConnect }:
           </button>
         </header>
 
-        <div className="mt-4 rounded-xl border border-[#ebdca4] bg-[#fffdf5] p-3 text-xs leading-relaxed text-[#092328]/80">
+        <div className="hidden mt-4 rounded-xl border border-[#ebdca4] bg-[#fffdf5] p-3 text-xs leading-relaxed text-[#092328]/80">
           First onboard at the{' '}
           <a
             href="https://wallet.validator.hackcanton-01.devnet.naas.noders.services"
