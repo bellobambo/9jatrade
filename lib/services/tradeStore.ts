@@ -573,7 +573,16 @@ class TradeStateStore {
     await this.refresh();
   }
   async acceptFinancingOffer(offerId: string) {
-    const offer = this.byTemplate<FinancingOfferPayload>(':Financing:FinancingOffer').find((contract) => contract.payload.offerId === offerId); if (!offer) throw new Error('Financing offer not found on Canton.');
+    // Always re-fetch fresh contracts from the ledger immediately before exercising.
+    // The cached contractId can become stale if the FinancingOffer contract was
+    // archived and recreated (e.g. another offer cycle or concurrent action) between
+    // the last refresh() and the moment the user clicks Accept — causing HTTP 404.
+    const freshContracts = await this.readActiveContracts(this.connectedParty!);
+    const offer = freshContracts
+      .filter((c) => c.templateId.endsWith(':Financing:FinancingOffer'))
+      .map(asPayload<FinancingOfferPayload>)
+      .find((contract) => contract.payload.offerId === offerId);
+    if (!offer) throw new Error('Financing offer not found on Canton. It may have already been accepted, withdrawn, or expired — please refresh and try again.');
     this.requireConnectedRole('SupplierRole');
     if (offer.payload.supplier !== this.connectedParty) throw new Error('Only the offer supplier can accept it.');
     await this.command({ kind: 'exercise', actingParty: offer.payload.supplier, template: 'Financing:FinancingOffer', contractId: offer.contractId, choice: 'AcceptFinancingOffer', payload: { agreementId: `AGREE-${offer.payload.invoiceId}-${crypto.randomUUID().slice(0, 8)}` } });
