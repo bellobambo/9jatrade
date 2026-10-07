@@ -3,7 +3,7 @@ import { ToastProvider } from "@/components/ToastProvider";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "9jaTrade · Verified B2B Trade & Invoice Financing",
+  title: "9jaTrade",
   description: "Privacy-preserving B2B infrastructure for verifying commercial obligations, connecting confirmed invoices to financing, and coordinating settlement.",
 };
 
