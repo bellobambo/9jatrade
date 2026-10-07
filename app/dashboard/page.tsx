@@ -67,11 +67,12 @@ export default function UnifiedTradeDashboard() {
   const [offerModalInvoice, setOfferModalInvoice] = useState<string | null>(null);
 
   // Form states
-  const [maxFundingInput, setMaxFundingInput] = useState<number>(8500000);
+  const [maxFundingInput, setMaxFundingInput] = useState<number | ''>('');
   const [newInvId, setNewInvId] = useState('');
   const [selectedBuyer, setSelectedBuyer] = useState(registeredBuyers[0]?.companyParty || '');
   const [customBuyerParty, setCustomBuyerParty] = useState('');
   const [newAmount, setNewAmount] = useState<number | ''>('');
+  const [newDueDateDays, setNewDueDateDays] = useState<number | ''>('');
   const [newDesc, setNewDesc] = useState('');
   const [newQuantity, setNewQuantity] = useState<number | ''>('');
   const [newWeight, setNewWeight] = useState('');
@@ -90,8 +91,8 @@ export default function UnifiedTradeDashboard() {
   const [deliveryReference, setDeliveryReference] = useState('');
   const [paymentRef, setPaymentRef] = useState('');
 
-  const [fundingAmount, setFundingAmount] = useState<number>(8500000);
-  const [financingFee, setFinancingFee] = useState<number>(600000);
+  const [fundingAmount, setFundingAmount] = useState<number | ''>('');
+  const [financingFee, setFinancingFee] = useState<number | ''>('');
   const [conditions, setConditions] = useState<string>('Valid waybill and formal buyer obligation acknowledgement required.');
   const activeOfferRequest = offerModalInvoice
     ? store.getFinancingRequests().find((request) => request.invoiceId === offerModalInvoice)
@@ -130,6 +131,7 @@ export default function UnifiedTradeDashboard() {
         supplier: currentProfile?.companyParty,
         amount: Number(Number(newAmount).toFixed(10)),
         description: newDesc,
+        dueDateDays: Number(newDueDateDays),
         items: [
           {
             description: newDesc || 'Commercial Goods',
@@ -143,6 +145,7 @@ export default function UnifiedTradeDashboard() {
       setShowCreateModal(false);
       setNewInvId('');
       setNewAmount('');
+      setNewDueDateDays(60);
       showToast(`Invoice ${invoiceId} created and submitted successfully!`);
     } catch (err: unknown) {
       showError(err);
@@ -154,9 +157,10 @@ export default function UnifiedTradeDashboard() {
   const handleRequestFinancing = async (invoiceId: string) => {
     setIsRequestingFinance(true);
     try {
-      await store.requestFinancing(invoiceId, maxFundingInput);
+      const amountToRequest = Number(maxFundingInput);
+      await store.requestFinancing(invoiceId, amountToRequest);
       setShowFinancingModal(null);
-      showToast(`Financing request opened for ₦${maxFundingInput.toLocaleString()}. Competing financiers notified!`);
+      showToast(`Financing request opened for ₦${amountToRequest.toLocaleString()}. Competing financiers notified!`);
     } catch (err: unknown) {
       showError(err);
     } finally {
@@ -216,8 +220,8 @@ export default function UnifiedTradeDashboard() {
       await store.makeFinancingOffer({
         invoiceId,
         financier: currentProfile.companyParty,
-        fundingAmount,
-        financingFee,
+        fundingAmount: Number(fundingAmount),
+        financingFee: Number(financingFee),
         termDays: 60,
         conditions,
       });
@@ -771,17 +775,41 @@ export default function UnifiedTradeDashboard() {
                 />
               </div>
 
-              <div>
-                <label className="block font-bold text-[#092328] mb-1">Total Commercial Amount (₦)</label>
-                <input
-                  type="number"
-                  value={newAmount}
-                  placeholder="0.00"
-                  onChange={e => setNewAmount(e.target.value === '' ? '' : Number(e.target.value))}
-                  className="w-full border border-[#ebdca4] bg-[#fffdf5] rounded-xl p-3 font-mono text-base font-extrabold text-[#092328]"
-                  required
-                  min={1}
-                />
+              <div className="flex gap-4">
+                <div className="flex-[2]">
+                  <label className="block font-bold text-[#092328] mb-1">Total Commercial Amount (₦)</label>
+                  <input
+                    type="number"
+                    value={newAmount}
+                    placeholder="0.00"
+                    onChange={e => setNewAmount(e.target.value === '' ? '' : Number(e.target.value))}
+                    className="w-full border border-[#ebdca4] bg-[#fffdf5] rounded-xl p-3 font-mono text-base font-extrabold text-[#092328]"
+                    required
+                    min={1}
+                  />
+                </div>
+                <div className="flex-1">
+                  <label className="block font-bold text-[#092328] mb-1">Payment Terms</label>
+                  <div className="relative">
+                    <input
+                      type="number"
+                      value={newDueDateDays}
+                      placeholder="60"
+                      onChange={e => setNewDueDateDays(e.target.value === '' ? '' : Number(e.target.value))}
+                      className="w-full border border-[#ebdca4] bg-[#fffdf5] rounded-xl p-3 font-mono text-base font-bold text-[#092328] pr-12"
+                      required
+                      min={1}
+                    />
+                    <div className="absolute inset-y-0 right-0 flex items-center pr-4 pointer-events-none text-xs font-bold text-[#092328]/50">
+                      Days
+                    </div>
+                  </div>
+                  {newDueDateDays !== '' && Number(newDueDateDays) > 0 && (
+                    <div className="text-[10px] text-[#2b6819] font-bold mt-1.5 ml-1">
+                      Matures: {new Date(Date.now() + Number(newDueDateDays) * 86400000).toLocaleDateString(undefined, { weekday: 'short', year: 'numeric', month: 'short', day: 'numeric' })}
+                    </div>
+                  )}
+                </div>
               </div>
 
               <div className="flex gap-4">
