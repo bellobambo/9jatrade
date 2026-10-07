@@ -136,9 +136,7 @@ export function ConnectCantonModal({ isOpen, onClose, currentParty, onConnect }:
               className="w-full rounded-xl border border-[#ebdca4] bg-[#fffdf5] p-3 font-mono text-xs text-[#092328] outline-none focus:border-[#76C457]"
             />
             <p className="mt-1 break-all text-[11px] text-[#092328]/60">
-              {ledgerUserId
-                ? `Ledger user ID from token: ${ledgerUserId}`
-                : 'Your party ID and token are saved in browser local storage and restored on page refresh. They are cleared when you disconnect.'}
+              {ledgerUserId && `Ledger user ID from token: ${ledgerUserId}`}
             </p>
           </div>
 
