@@ -6,28 +6,55 @@ import toast from 'react-hot-toast';
 import { Navbar } from '@/components/Navbar';
 import { useTradeStore, TrustPassportData } from '@/lib/services/tradeStore';
 import { TrustPassportModal } from '@/components/TrustPassportModal';
-import { ConnectWalletModal } from '@/components/ConnectWalletModal';
+import { ConnectCantonModal } from '@/components/ConnectCantonModal';
 import { IconExchange, IconFileText, IconBuilding, IconBank, IconLock } from '@/components/Icons';
 
 type DashboardTab = 'all' | 'supplier' | 'buyer' | 'financier';
+
+const getInvoiceStatusColor = (status: string) => {
+  switch (status) {
+    case 'InvoiceDraft': return 'bg-[#f0e3b9]/50 text-[#092328]/70 border border-[#ebdca4]';
+    case 'InvoiceSubmitted': return 'bg-[#f6e9bc] text-[#092328] border border-[#ebdca4] shadow-sm';
+    case 'InvoiceConfirmed': return 'bg-[#e4f5de] text-[#2b6819] border border-[#76C457]/50';
+    case 'InvoiceDelivered': return 'bg-[#76C457]/20 text-[#092328] border border-[#76C457]/40';
+    case 'InvoiceFinanced': return 'bg-[#092328] text-[#76C457] border border-[#092328] shadow-sm';
+    case 'InvoiceSettled': return 'bg-[#76C457] text-[#092328] border border-[#67b049] shadow-sm';
+    case 'InvoiceRejected': return 'bg-red-100 text-red-900 border border-red-300';
+    case 'InvoiceDisputed': return 'bg-orange-100 text-orange-900 border border-orange-300';
+    default: return 'bg-amber-100 text-amber-900 border border-amber-300';
+  }
+};
 
 export default function UnifiedTradeDashboard() {
   const store = useTradeStore();
   const invoices = store.getInvoices();
   const agreements = store.getAgreements();
   const currentProfile = store.getCurrentProfile();
+  const currentParty = store.getCurrentParty();
+  const ownPendingRequest = currentParty
+    ? store.getRegistrationRequests().find(({ payload }) => payload.applicantParty === currentParty)
+    : undefined;
   const registeredBuyers = store.getCompanyProfiles('BuyerRole');
 
-  const [isWalletModalOpen, setIsWalletModalOpen] = useState(false);
+  const [isConnectionModalOpen, setIsConnectionModalOpen] = useState(false);
+  const [isRefreshing, setIsRefreshing] = useState(false);
 
   // Default tab based on active role if registered
-  const defaultTab: DashboardTab = currentProfile?.role === 'FinancierRole'
+  const roleDefaultTab: DashboardTab = currentProfile?.role === 'FinancierRole'
     ? 'financier'
     : currentProfile?.role === 'BuyerRole'
       ? 'buyer'
-      : 'all';
-
-  const [activeTab, setActiveTab] = useState<DashboardTab>(defaultTab);
+      : currentProfile?.role === 'SupplierRole'
+        ? 'supplier'
+        : 'all';
+  const [activeTab, setActiveTab] = useState<DashboardTab>('all');
+  const selectedTab = currentProfile ? roleDefaultTab : activeTab;
+  const visibleAgreements = agreements.filter((agreement) => {
+    if (!currentProfile) return true;
+    if (currentProfile.role === 'SupplierRole') return agreement.supplier === currentParty;
+    if (currentProfile.role === 'BuyerRole') return agreement.buyer === currentParty;
+    return agreement.financier === currentParty;
+  });
   const [selectedPassport, setSelectedPassport] = useState<TrustPassportData | null>(null);
 
   // Modals state
@@ -44,8 +71,18 @@ export default function UnifiedTradeDashboard() {
   const [newInvId, setNewInvId] = useState('');
   const [selectedBuyer, setSelectedBuyer] = useState(registeredBuyers[0]?.companyParty || '');
   const [customBuyerParty, setCustomBuyerParty] = useState('');
-  const [newAmount, setNewAmount] = useState(10000000);
-  const [newDesc, setNewDesc] = useState('Supply of Enterprise Commercial Equipment');
+  const [newAmount, setNewAmount] = useState<number | ''>('');
+  const [newDesc, setNewDesc] = useState('');
+  const [newQuantity, setNewQuantity] = useState<number | ''>('');
+  const [newWeight, setNewWeight] = useState('');
+  const [isSubmittingInvoice, setIsSubmittingInvoice] = useState(false);
+  const [isConfirming, setIsConfirming] = useState(false);
+  const [isDelivering, setIsDelivering] = useState(false);
+  const [isRequestingFinance, setIsRequestingFinance] = useState(false);
+  const [isSettling, setIsSettling] = useState(false);
+  const [isMakingOffer, setIsMakingOffer] = useState(false);
+  const [isAcceptingOffer, setIsAcceptingOffer] = useState(false);
+  const [isMarkingFunded, setIsMarkingFunded] = useState(false);
 
   const [confirmNotes, setConfirmNotes] = useState('We acknowledge the commercial obligation.');
   const [deliveryNotes, setDeliveryNotes] = useState('Full consignment inspected and accepted in good order at designated warehouse.');
@@ -56,66 +93,105 @@ export default function UnifiedTradeDashboard() {
   const [fundingAmount, setFundingAmount] = useState<number>(8500000);
   const [financingFee, setFinancingFee] = useState<number>(600000);
   const [conditions, setConditions] = useState<string>('Valid waybill and formal buyer obligation acknowledgement required.');
+  const activeOfferRequest = offerModalInvoice
+    ? store.getFinancingRequests().find((request) => request.invoiceId === offerModalInvoice)
+    : undefined;
+  const financingInvoice = showFinancingModal
+    ? invoices.find(({ payload }) => payload.invoiceId === showFinancingModal)?.payload
+    : undefined;
 
   const showToast = (message: string) => toast.success(message);
   const showError = (error: unknown) => toast.error(error instanceof Error ? error.message : 'Canton command failed.');
 
+  const handleRefresh = async () => {
+    setIsRefreshing(true);
+    try {
+      await store.refresh();
+      if (store.getError()) throw new Error(store.getError() ?? 'Unable to refresh the Canton ledger.');
+      showToast('Ledger data refreshed.');
+    } catch (error) {
+      showError(error);
+    } finally {
+      setIsRefreshing(false);
+    }
+  };
+
   // Actions
   const handleCreateInvoice = async (e: React.FormEvent) => {
     e.preventDefault();
-    const buyerParty = customBuyerParty.trim() || selectedBuyer;
-    const invoiceId = newInvId.trim() || `INV-${crypto.randomUUID().slice(0, 8)}`;
+    const buyerParty = (selectedBuyer && selectedBuyer !== '__manual__') ? selectedBuyer : customBuyerParty.trim();
+    const invoiceId = newInvId;
 
+    setIsSubmittingInvoice(true);
     try {
       await store.createInvoice({
         invoiceId,
         buyer: buyerParty,
         supplier: currentProfile?.companyParty,
-        amount: Number(newAmount),
+        amount: Number(Number(newAmount).toFixed(10)),
         description: newDesc,
         items: [
-          { description: 'Enterprise Hardware Consignment', quantity: 2, unit: 'Units', unitPrice: newAmount / 2, itemTotal: newAmount },
+          {
+            description: newDesc || 'Commercial Goods',
+            quantity: Number(Number(newQuantity).toFixed(10)) || 1,
+            unit: newWeight ? `Weight: ${newWeight}` : 'Units',
+            unitPrice: Number((Number(newAmount) / (Number(newQuantity) || 1)).toFixed(10)),
+            itemTotal: Number(Number(newAmount).toFixed(10))
+          }
         ]
       });
       setShowCreateModal(false);
       setNewInvId('');
+      setNewAmount('');
       showToast(`Invoice ${invoiceId} created and submitted successfully!`);
     } catch (err: unknown) {
       showError(err);
+    } finally {
+      setIsSubmittingInvoice(false);
     }
   };
 
   const handleRequestFinancing = async (invoiceId: string) => {
+    setIsRequestingFinance(true);
     try {
       await store.requestFinancing(invoiceId, maxFundingInput);
       setShowFinancingModal(null);
       showToast(`Financing request opened for ₦${maxFundingInput.toLocaleString()}. Competing financiers notified!`);
     } catch (err: unknown) {
       showError(err);
+    } finally {
+      setIsRequestingFinance(false);
     }
   };
 
   const handleAcceptOffer = async (offerId: string) => {
+    setIsAcceptingOffer(true);
     try {
       await store.acceptFinancingOffer(offerId);
       setShowOffersDrawer(null);
       showToast('Offer accepted. The invoice is locked and a financing agreement is recorded on Canton.');
     } catch (err: unknown) {
       showError(err);
+    } finally {
+      setIsAcceptingOffer(false);
     }
   };
 
   const handleConfirmInvoice = async (invoiceId: string) => {
+    setIsConfirming(true);
     try {
       await store.confirmInvoice(invoiceId, confirmNotes);
       setConfirmModalInvoice(null);
       showToast(`Commercial debt obligation confirmed by buyer.`);
     } catch (err: unknown) {
       showError(err);
+    } finally {
+      setIsConfirming(false);
     }
   };
 
   const handleConfirmDelivery = async (invoiceId: string) => {
+    setIsDelivering(true);
     try {
       if (!deliveryFile) throw new Error('Select the delivery document to hash.');
       if (!deliveryReference.trim()) throw new Error('Enter the durable storage reference for the delivery document.');
@@ -128,10 +204,13 @@ export default function UnifiedTradeDashboard() {
       showToast('Buyer delivery confirmation and document hash recorded on Canton.');
     } catch (err: unknown) {
       showError(err);
+    } finally {
+      setIsDelivering(false);
     }
   };
 
   const handleMakeOffer = async (invoiceId: string) => {
+    setIsMakingOffer(true);
     try {
       if (currentProfile?.role !== 'FinancierRole') throw new Error('Connect an approved financier profile first.');
       await store.makeFinancingOffer({
@@ -146,25 +225,33 @@ export default function UnifiedTradeDashboard() {
       showToast('Financing offer submitted! Supplier notified.');
     } catch (err: unknown) {
       showError(err);
+    } finally {
+      setIsMakingOffer(false);
     }
   };
 
   const handleMarkFunded = async (agreementId: string) => {
+    setIsMarkingFunded(true);
     try {
       await store.markAsFunded(agreementId);
       showToast('Funding marked as disbursed on Canton. This choice does not transfer funds.');
     } catch (err: unknown) {
       showError(err);
+    } finally {
+      setIsMarkingFunded(false);
     }
   };
 
   const handleSettle = async (agreementId: string) => {
+    setIsSettling(true);
     try {
       await store.settleFinancing(agreementId, paymentRef);
       setSettleModalInvoice(null);
       showToast('Settlement allocation recorded on Canton. Funds must be transferred separately.');
     } catch (err: unknown) {
       showError(err);
+    } finally {
+      setIsSettling(false);
     }
   };
 
@@ -181,19 +268,21 @@ export default function UnifiedTradeDashboard() {
 
   // Filter invoices according to tab
   const displayedInvoices = invoices.filter(({ payload: inv }) => {
-    if (activeTab === 'all') return true;
-    if (activeTab === 'supplier') {
-      return currentProfile?.role === 'SupplierRole'
-        ? inv.supplier === currentProfile.companyParty
-        : true;
+    if (selectedTab === 'all') return true;
+    if (selectedTab === 'supplier') {
+      return currentProfile?.role === 'SupplierRole' && inv.supplier === currentParty;
     }
-    if (activeTab === 'buyer') {
-      return currentProfile?.role === 'BuyerRole'
-        ? inv.buyer === currentProfile.companyParty
-        : true;
+    if (selectedTab === 'buyer') {
+      return currentProfile?.role === 'BuyerRole' && inv.buyer === currentParty;
     }
-    if (activeTab === 'financier') {
-      return inv.status === 'InvoiceConfirmed' || inv.status === 'InvoiceDelivered' || inv.status === 'InvoiceFinanced' || inv.status === 'InvoiceSettled';
+    if (selectedTab === 'financier') {
+      if (currentProfile?.role !== 'FinancierRole') return false;
+      const financingRequest = store.getFinancingRequests().find((request) => request.invoiceId === inv.invoiceId);
+      const agreement = store.getTrustPassport(inv.invoiceId)?.activeAgreement;
+      return Boolean(
+        financingRequest?.eligibleFinanciers.includes(currentParty ?? '')
+        || agreement?.financier === currentParty
+      );
     }
     return true;
   });
@@ -204,7 +293,7 @@ export default function UnifiedTradeDashboard() {
 
       {/* Dashboard Top Banner */}
       <div className="bg-[#FDF4D2] border-b border-[#ebdca4]">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+        <div className="w-full px-4 sm:px-6 py-8">
           <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
             <div>
               <div className="flex items-center gap-2">
@@ -223,89 +312,146 @@ export default function UnifiedTradeDashboard() {
               </p>
             </div>
 
-            <div className="flex items-center gap-3">
+            <div className="flex flex-wrap items-center gap-3">
+              {currentProfile?.role === 'SupplierRole' && (
+                <button
+                  onClick={() => { setNewInvId(`INV-${crypto.randomUUID().slice(0, 8).toUpperCase()}`); setNewAmount(''); setNewDesc(''); setNewQuantity(''); setNewWeight(''); setShowCreateModal(true); }}
+                  className="bg-[#76C457] hover:bg-[#67b049] text-[#092328] text-sm font-black px-5 py-3 rounded-2xl shadow-sm hover:shadow-md transition-all flex items-center gap-2 cursor-pointer"
+                >
+                  <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M12 4v16m8-8H4" />
+                  </svg>
+                  Issue Commercial Invoice
+                </button>
+              )}
               <button
-                onClick={() => setShowCreateModal(true)}
-                className="bg-[#76C457] hover:bg-[#67b049] text-[#092328] text-sm font-black px-5 py-3 rounded-2xl shadow-sm hover:shadow-md transition-all flex items-center gap-2 cursor-pointer"
+                type="button"
+                onClick={() => { void handleRefresh(); }}
+                disabled={isRefreshing}
+                className="rounded-xl border border-[#ebdca4] bg-[#fffdf5] px-4 py-3 text-xs font-bold text-[#092328] disabled:cursor-wait disabled:opacity-60"
               >
-                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M12 4v16m8-8H4" />
-                </svg>
-                + Issue Commercial Invoice
+                {isRefreshing ? 'Refreshing...' : 'Refresh ledger'}
               </button>
             </div>
           </div>
 
           {/* Unified Role Segmented Pill Bar */}
           <div className="flex items-center gap-2 mt-6 overflow-x-auto pb-2">
-            <button
+            {!currentProfile && <button
               onClick={() => setActiveTab('all')}
-              className={`px-4 py-2 rounded-xl text-xs sm:text-sm font-extrabold transition-all cursor-pointer whitespace-nowrap flex items-center gap-2 ${activeTab === 'all'
+              className={`px-4 py-2 rounded-xl text-xs sm:text-sm font-extrabold transition-all cursor-pointer whitespace-nowrap flex items-center gap-2 ${selectedTab === 'all'
                 ? 'bg-[#092328] text-white shadow-xs'
                 : 'bg-[#f0e3b9] text-[#092328]/70 hover:text-[#092328]'
                 }`}
             >
               <IconExchange className="w-4 h-4 text-[#76C457]" />
               <span>All Network Invoices ({invoices.length})</span>
-            </button>
+            </button>}
 
-            <button
+            {(!currentProfile || currentProfile.role === 'SupplierRole') && <button
               onClick={() => setActiveTab('supplier')}
-              className={`px-4 py-2 rounded-xl text-xs sm:text-sm font-extrabold transition-all cursor-pointer whitespace-nowrap flex items-center gap-2 ${activeTab === 'supplier'
+              className={`px-4 py-2 rounded-xl text-xs sm:text-sm font-extrabold transition-all cursor-pointer whitespace-nowrap flex items-center gap-2 ${selectedTab === 'supplier'
                 ? 'bg-[#092328] text-[#76C457] shadow-xs'
                 : 'bg-[#f0e3b9] text-[#092328]/70 hover:text-[#092328]'
                 }`}
             >
               <IconFileText className="w-4 h-4 text-[#76C457]" />
               <span>Supplier Desk (Originate & Finance)</span>
-            </button>
+            </button>}
 
-            <button
+            {(!currentProfile || currentProfile.role === 'BuyerRole') && <button
               onClick={() => setActiveTab('buyer')}
-              className={`px-4 py-2 rounded-xl text-xs sm:text-sm font-extrabold transition-all cursor-pointer whitespace-nowrap flex items-center gap-2 ${activeTab === 'buyer'
+              className={`px-4 py-2 rounded-xl text-xs sm:text-sm font-extrabold transition-all cursor-pointer whitespace-nowrap flex items-center gap-2 ${selectedTab === 'buyer'
                 ? 'bg-[#092328] text-[#76C457] shadow-xs'
                 : 'bg-[#f0e3b9] text-[#092328]/70 hover:text-[#092328]'
                 }`}
             >
               <IconBuilding className="w-4 h-4 text-[#76C457]" />
               <span>Buyer Desk (Acknowledge & Deliver)</span>
-            </button>
+            </button>}
 
-            <button
+            {(!currentProfile || currentProfile.role === 'FinancierRole') && <button
               onClick={() => setActiveTab('financier')}
-              className={`px-4 py-2 rounded-xl text-xs sm:text-sm font-extrabold transition-all cursor-pointer whitespace-nowrap flex items-center gap-2 ${activeTab === 'financier'
+              className={`px-4 py-2 rounded-xl text-xs sm:text-sm font-extrabold transition-all cursor-pointer whitespace-nowrap flex items-center gap-2 ${selectedTab === 'financier'
                 ? 'bg-[#092328] text-[#76C457] shadow-xs'
                 : 'bg-[#f0e3b9] text-[#092328]/70 hover:text-[#092328]'
                 }`}
             >
               <IconBank className="w-4 h-4 text-[#76C457]" />
               <span>Financier Desk (Marketplace & Yield)</span>
-            </button>
+            </button>}
           </div>
         </div>
       </div>
 
       {/* Main Content */}
-      <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 w-full flex-1">
+      <main className="mx-auto w-full max-w-6xl px-4 sm:px-6 py-6 sm:py-8 flex-1">
 
-        {!currentProfile ? (
-          /* Locked State: Connect Wallet First */
+        {store.getError() && currentParty && (
+          <div role="alert" className="mb-6 flex flex-col gap-3 rounded-2xl border border-red-300 bg-red-50 p-4 text-sm text-red-900 sm:flex-row sm:items-center sm:justify-between">
+            <p className="break-words">{store.getError()}</p>
+            <button
+              type="button"
+              onClick={() => { void handleRefresh(); }}
+              disabled={isRefreshing}
+              className="shrink-0 rounded-lg border border-red-300 px-3 py-2 text-xs font-bold disabled:opacity-60"
+            >
+              Retry
+            </button>
+          </div>
+        )}
+
+        {!currentParty ? (
+          /* Locked State: Connect to the Ledger First */
           <div className="bg-[#fffdf5] border border-[#ebdca4] rounded-3xl p-10 sm:p-14 text-center max-w-xl mx-auto shadow-xl my-8">
             <div className="w-16 h-16 rounded-2xl bg-[#092328] text-[#76C457] flex items-center justify-center mx-auto mb-5 shadow-md">
               <IconLock className="w-8 h-8 text-[#76C457]" />
             </div>
             <h2 className="text-2xl font-black text-[#092328] mb-3">
-              Wallet Connection Required
+              Ledger API Connection Required
             </h2>
             <p className="text-xs sm:text-sm text-[#092328]/70 leading-relaxed mb-8">
-              Connect your wallet (Grofty, Cauri Passkey, or Party ID) to view your verified commercial obligations, originate invoices, and participate in trade financing.
+              Connect with your HackCanton Ledger access token and allocated party to view your verified commercial obligations, originate invoices, and participate in trade financing.
             </p>
             <button
-              onClick={() => setIsWalletModalOpen(true)}
+              onClick={() => setIsConnectionModalOpen(true)}
               className="bg-[#76C457] hover:bg-[#67b049] text-[#092328] font-black text-sm px-8 py-3.5 rounded-xl shadow-md hover:shadow-lg transition-all cursor-pointer"
             >
-              Connect Wallet Now
+              Connect to Ledger Now
             </button>
+          </div>
+        ) : !currentProfile ? (
+          <div className="mx-auto my-8 w-full max-w-3xl rounded-3xl border border-[#ebdca4] bg-[#fffdf5] p-6 shadow-xl sm:p-10">
+            <span className={`inline-flex rounded-full px-3 py-1 text-xs font-bold ${ownPendingRequest ? 'bg-amber-100 text-amber-900' : 'bg-[#f6e9bc] text-[#092328]'}`}>
+              {ownPendingRequest ? 'Operator approval pending' : 'Company profile required'}
+            </span>
+            <h2 className="mt-4 text-2xl font-black text-[#092328]">
+              {ownPendingRequest ? 'Your registration is awaiting approval' : 'Complete company registration to start trading'}
+            </h2>
+            <p className="mt-2 max-w-3xl text-sm leading-relaxed text-[#092328]/75">
+              {ownPendingRequest
+                ? `${ownPendingRequest.payload.companyName} is registered as a pending ${ownPendingRequest.payload.requestedRole} request. An authorized operator party must approve it before trade actions become available.`
+                : 'Your Ledger connection is active, but this party does not yet have an approved company profile. Submit your company details and wait for operator approval.'}
+            </p>
+            {ownPendingRequest && (
+              <div className="mt-5 min-w-0 rounded-xl border border-[#ebdca4] bg-[#FDF4D2] p-4">
+                <p className="text-xs font-bold text-[#092328]/70">Registration contract ID</p>
+                <code className="mt-2 block max-h-20 overflow-y-auto break-all font-mono text-xs">{ownPendingRequest.cid}</code>
+              </div>
+            )}
+            <div className="mt-6 flex flex-wrap gap-3">
+              <Link href="/register" className="rounded-xl bg-[#092328] px-5 py-3 text-sm font-bold text-[#76C457]">
+                {ownPendingRequest ? 'View registration status' : 'Go to company registration'}
+              </Link>
+              <button
+                type="button"
+                onClick={() => { void handleRefresh(); }}
+                disabled={isRefreshing}
+                className="rounded-xl border border-[#ebdca4] px-5 py-3 text-sm font-bold disabled:opacity-60"
+              >
+                {isRefreshing ? 'Checking...' : 'Check approval status'}
+              </button>
+            </div>
           </div>
         ) : (
           <>
@@ -317,28 +463,39 @@ export default function UnifiedTradeDashboard() {
                 </div>
                 <h3 className="text-xl font-extrabold text-[#092328] mb-2">No Receivables Found in this View</h3>
                 <p className="text-xs text-[#092328]/70 max-w-md mx-auto mb-6">
-                  Create a commercial invoice to issue an obligation, or switch tabs to explore other perspectives.
+                  {currentProfile.role === 'SupplierRole'
+                    ? 'Create an invoice to start a verified trade flow, or refresh the ledger to check for new activity.'
+                    : 'No invoices are currently visible for this view. Refresh the ledger to check for new activity.'}
                 </p>
                 <div className="flex flex-wrap items-center justify-center gap-3">
+                  {currentProfile.role === 'SupplierRole' && (
+                    <button
+                      onClick={() => { setNewInvId(`INV-${crypto.randomUUID().slice(0, 8).toUpperCase()}`); setNewAmount(''); setNewDesc(''); setNewQuantity(''); setNewWeight(''); setShowCreateModal(true); }}
+                      className="bg-[#76C457] hover:bg-[#67b049] text-[#092328] font-black text-xs px-6 py-3 rounded-xl shadow-xs transition-colors cursor-pointer"
+                    >
+                      + Issue Commercial Invoice
+                    </button>
+                  )}
                   <button
-                    onClick={() => setShowCreateModal(true)}
-                    className="bg-[#76C457] hover:bg-[#67b049] text-[#092328] font-black text-xs px-6 py-3 rounded-xl shadow-xs transition-colors cursor-pointer"
+                    type="button"
+                    onClick={() => { void handleRefresh(); }}
+                    disabled={isRefreshing}
+                    className="rounded-xl border border-[#ebdca4] px-6 py-3 text-xs font-bold disabled:opacity-60"
                   >
-                    + Issue Commercial Invoice
+                    {isRefreshing ? 'Refreshing...' : 'Refresh ledger'}
                   </button>
-                  <Link
-                    href="/register"
-                    className="bg-[#092328] hover:bg-[#133e46] text-white font-bold text-xs px-6 py-3 rounded-xl transition-colors"
-                  >
-                    Register Company Profile
-                  </Link>
                 </div>
               </div>
             ) : (
               <div className="space-y-4">
-                {displayedInvoices.map(({ payload: inv, cid }) => {
+                {displayedInvoices.map(({ payload: inv }) => {
                   const passport = store.getTrustPassport(inv.invoiceId);
                   const offers = store.getFinancingOffersForInvoice(inv.invoiceId);
+                  const financingRequest = store.getFinancingRequests().find((request) => request.invoiceId === inv.invoiceId);
+                  const supplierCanAct = currentProfile.role === 'SupplierRole' && inv.supplier === currentParty;
+                  const buyerCanAct = currentProfile.role === 'BuyerRole' && inv.buyer === currentParty;
+                  const financierCanAct = currentProfile.role === 'FinancierRole'
+                    && Boolean(financingRequest?.eligibleFinanciers.includes(currentParty ?? ''));
                   const isSubmitted = inv.status === 'InvoiceSubmitted';
                   const isConfirmed = inv.status === 'InvoiceConfirmed';
                   const isDelivered = inv.status === 'InvoiceDelivered';
@@ -357,12 +514,7 @@ export default function UnifiedTradeDashboard() {
                         <div className="space-y-3">
                           <div className="flex items-center gap-3">
                             <span className="font-mono text-lg font-black text-[#092328]">{inv.invoiceId}</span>
-                            <span className={`text-xs px-3 py-1 rounded-full font-bold ${isSettled ? 'bg-[#76C457] text-[#092328]' :
-                              isFinanced ? 'bg-[#092328] text-[#76C457]' :
-                                isDelivered ? 'bg-[#76C457]/20 text-[#092328]' :
-                                  isConfirmed ? 'bg-[#e4f5de] text-[#2b6819]' :
-                                    'bg-amber-100 text-amber-900'
-                              }`}>
+                            <span className={`text-xs px-3 py-1 rounded-full font-bold ${getInvoiceStatusColor(inv.status)}`}>
                               {inv.status}
                             </span>
                             <span className="text-xs text-[#092328]/60 font-medium hidden sm:inline">Verified Obligation</span>
@@ -375,7 +527,7 @@ export default function UnifiedTradeDashboard() {
                             <span>•</span>
                             <span>Buyer: <strong className="text-[#092328] font-bold">{inv.buyer.split('::')[0]}</strong></span>
                             <span>•</span>
-                            <span>Face Value: <strong className="text-2xl font-black text-[#092328] ml-1">₦{inv.amount.toLocaleString()}</strong></span>
+                            <span>Face Value: <strong className="text-2xl font-black text-[#092328] ml-1">₦{Number(inv.amount).toLocaleString()}</strong></span>
                             <span>•</span>
                             <span>Due Date: <strong className="text-[#092328]">{new Date(inv.dueDate).toLocaleDateString()}</strong></span>
                           </div>
@@ -394,7 +546,7 @@ export default function UnifiedTradeDashboard() {
                           </button>
 
                           {/* Supplier Action: Request Financing */}
-                          {(isConfirmed || isDelivered) && !isFinanced && !isSettled && (
+                          {supplierCanAct && (isConfirmed || isDelivered) && !isFinanced && !isSettled && !financingRequest && (
                             <button
                               onClick={() => {
                                 setMaxFundingInput(Math.round(inv.amount * 0.85));
@@ -407,7 +559,7 @@ export default function UnifiedTradeDashboard() {
                           )}
 
                           {/* Supplier Action: View Competing Offers */}
-                          {offers.length > 0 && !isFinanced && !isSettled && (
+                          {supplierCanAct && offers.length > 0 && !isFinanced && !isSettled && (
                             <button
                               onClick={() => setShowOffersDrawer(inv.invoiceId)}
                               className="bg-[#092328] hover:bg-[#133e46] text-[#76C457] text-xs font-bold px-4 py-2.5 rounded-xl transition-colors cursor-pointer flex items-center gap-1.5"
@@ -416,12 +568,17 @@ export default function UnifiedTradeDashboard() {
                               <span className="bg-[#76C457] text-[#092328] text-[10px] font-black px-1.5 py-0.5 rounded-full">{offers.length}</span>
                             </button>
                           )}
+                          {supplierCanAct && financingRequest && offers.length === 0 && !isFinanced && !isSettled && (
+                            <span className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-2.5 text-xs font-bold text-amber-900">
+                              Financing request open · waiting for offers
+                            </span>
+                          )}
 
                           {/* Buyer Action 1: Confirm Obligation */}
-                          {isSubmitted && (
+                          {buyerCanAct && isSubmitted && (
                             <button
                               onClick={() => {
-                                setConfirmNotes(`We acknowledge the ₦${inv.amount.toLocaleString()} commercial obligation to ${inv.supplier.split('::')[0]}.`);
+                                setConfirmNotes(`We acknowledge the ₦${Number(inv.amount).toLocaleString()} commercial obligation to ${inv.supplier.split('::')[0]}.`);
                                 setConfirmModalInvoice(inv.invoiceId);
                               }}
                               className="bg-[#76C457] hover:bg-[#67b049] text-[#092328] text-xs font-black px-4 py-2.5 rounded-xl shadow-xs transition-colors cursor-pointer"
@@ -431,7 +588,7 @@ export default function UnifiedTradeDashboard() {
                           )}
 
                           {/* Buyer Action 2: Confirm Delivery */}
-                          {isConfirmed && (
+                          {buyerCanAct && isConfirmed && (
                             <button
                               onClick={() => setDeliveryModalInvoice(inv.invoiceId)}
                               className="bg-[#092328] hover:bg-[#133e46] text-[#76C457] text-xs font-bold px-4 py-2.5 rounded-xl shadow-xs transition-colors cursor-pointer"
@@ -441,10 +598,10 @@ export default function UnifiedTradeDashboard() {
                           )}
 
                           {/* Financier Action: Submit Offer */}
-                          {(isConfirmed || isDelivered) && !isFinanced && !isSettled && (
+                          {financierCanAct && (isConfirmed || isDelivered) && !isFinanced && !isSettled && (
                             <button
                               onClick={() => {
-                                setFundingAmount(Math.round(inv.amount * 0.85));
+                                setFundingAmount(Math.min(Math.round(inv.amount * 0.85), financingRequest?.maxFundingRequested ?? inv.amount));
                                 setFinancingFee(Math.round(inv.amount * 0.06));
                                 setOfferModalInvoice(inv.invoiceId);
                               }}
@@ -454,8 +611,29 @@ export default function UnifiedTradeDashboard() {
                             </button>
                           )}
 
+                          {/* Financier Action: Mark Funded */}
+                          {financierCanAct && isFinanced && agreement && !agreement.isFunded && agreement.financier === currentParty && (
+                            <button
+                              onClick={() => handleMarkFunded(agreement.agreementId)}
+                              disabled={isMarkingFunded}
+                              className="bg-[#e4f5de] hover:bg-[#c9efbf] border border-[#76C457] text-[#2b6819] text-xs font-bold px-4 py-2.5 rounded-xl transition-colors cursor-pointer disabled:opacity-70 disabled:cursor-not-allowed flex items-center justify-center min-w-[125px]"
+                            >
+                              {isMarkingFunded ? (
+                                <span className="flex items-center gap-1.5">
+                                  <svg className="animate-spin h-3.5 w-3.5 text-[#2b6819]" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                                  </svg>
+                                  Marking...
+                                </span>
+                              ) : (
+                                'Mark as Funded'
+                              )}
+                            </button>
+                          )}
+
                           {/* Settlement Action */}
-                          {isFinanced && agreement?.isFunded && (
+                          {buyerCanAct && isFinanced && agreement?.isFunded && agreement.buyer === currentParty && (
                             <button
                               onClick={() => setSettleModalInvoice(agreement.agreementId)}
                               className="bg-[#76C457] hover:bg-[#67b049] text-[#092328] text-xs font-black px-4 py-2.5 rounded-xl shadow-xs transition-colors cursor-pointer"
@@ -485,8 +663,8 @@ export default function UnifiedTradeDashboard() {
                             <div key={idx} className="bg-[#f6e9bc] p-3 rounded-xl border border-[#ebdca4]">
                               <span className="font-bold text-[#092328] block truncate">{item.description}</span>
                               <div className="flex justify-between text-[11px] text-[#092328]/70 mt-1">
-                                <span>{item.quantity} {item.unit}</span>
-                                <span className="font-bold text-[#092328]">₦{item.itemTotal.toLocaleString()}</span>
+                                <span>{Number(item.quantity)} {item.unit}</span>
+                                <span className="font-bold text-[#092328]">₦{Number(item.itemTotal).toLocaleString()}</span>
                               </div>
                             </div>
                           ))}
@@ -500,11 +678,11 @@ export default function UnifiedTradeDashboard() {
             )}
 
             {/* Active Loan Portfolio (If viewing Financier Desk or Agreements exist) */}
-            {(activeTab === 'all' || activeTab === 'financier') && agreements.length > 0 && (
+            {(selectedTab === 'all' || selectedTab === 'supplier' || selectedTab === 'financier') && visibleAgreements.length > 0 && (
               <div className="mt-10">
                 <h2 className="text-xl font-extrabold text-[#092328] mb-4">Active Loan Portfolio</h2>
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  {agreements.map(agree => (
+                  {visibleAgreements.map(agree => (
                     <div key={agree.agreementId} className="bg-[#FDF4D2] border border-[#ebdca4] rounded-3xl p-6 shadow-xs">
                       <div className="flex items-center justify-between mb-4">
                         <span className="font-mono text-sm font-extrabold text-[#092328]">{agree.agreementId}</span>
@@ -519,20 +697,20 @@ export default function UnifiedTradeDashboard() {
                       <div className="grid grid-cols-3 gap-2 bg-[#f6e9bc] p-4 rounded-2xl text-xs mb-4 font-mono border border-[#ebdca4]">
                         <div>
                           <span className="text-gray-500 block text-[10px] uppercase">Disbursed</span>
-                          <strong className="text-base font-black text-[#092328]">₦{agree.fundingAmount.toLocaleString()}</strong>
+                          <strong className="text-base font-black text-[#092328]">₦{Number(agree.fundingAmount).toLocaleString()}</strong>
                         </div>
                         <div>
                           <span className="text-gray-500 block text-[10px] uppercase">Expected Yield</span>
-                          <strong className="text-base font-bold text-[#2b6819]">₦{agree.financingFee.toLocaleString()}</strong>
+                          <strong className="text-base font-bold text-[#2b6819]">₦{Number(agree.financingFee).toLocaleString()}</strong>
                         </div>
                         <div>
                           <span className="text-gray-500 block text-[10px] uppercase">Gross Return</span>
-                          <strong className="text-base font-black text-[#092328]">₦{agree.totalRepaymentToFinancier.toLocaleString()}</strong>
+                          <strong className="text-base font-black text-[#092328]">₦{Number(agree.totalRepaymentToFinancier).toLocaleString()}</strong>
                         </div>
                       </div>
 
                       {/* Disburse Capital button */}
-                      {!agree.isFunded && !agree.isSettled && (
+                      {currentProfile.role === 'FinancierRole' && agree.financier === currentParty && !agree.isFunded && !agree.isSettled && (
                         <button
                           onClick={() => handleMarkFunded(agree.agreementId)}
                           className="w-full bg-[#76C457] hover:bg-[#67b049] text-[#092328] font-black py-3 rounded-xl text-xs shadow-xs transition-colors cursor-pointer"
@@ -543,13 +721,13 @@ export default function UnifiedTradeDashboard() {
 
                       {agree.isFunded && !agree.isSettled && (
                         <div className="text-center text-xs text-[#092328] font-bold bg-[#f7ebbd] py-2.5 rounded-xl border border-[#ebdca4]">
-                          Awaiting buyer maturity payment of ₦{agree.totalRepaymentToFinancier.toLocaleString()}
+                          Awaiting buyer maturity payment of ₦{Number(agree.totalRepaymentToFinancier).toLocaleString()}
                         </div>
                       )}
 
                       {agree.isSettled && (
                         <div className="text-center text-xs text-[#092328] font-black bg-[#76C457] py-2.5 rounded-xl">
-                          ✓ Yield Realized: ₦{agree.financingFee.toLocaleString()} (Principal + Fee Returned)
+                          ✓ Yield Realized: ₦{Number(agree.financingFee).toLocaleString()} (Principal + Fee Returned)
                         </div>
                       )}
                     </div>
@@ -576,36 +754,21 @@ export default function UnifiedTradeDashboard() {
                 <input
                   type="text"
                   value={newInvId}
-                  onChange={e => setNewInvId(e.target.value)}
-                  className="w-full border border-[#ebdca4] bg-[#fffdf5] rounded-xl p-3 font-mono text-xs font-bold"
-                  required
+                  readOnly
+                  className="w-full border border-[#ebdca4] bg-[#f0ead8] rounded-xl p-3 font-mono text-xs font-bold text-[#092328]/70 cursor-not-allowed select-all"
                 />
               </div>
 
               <div>
-                <label className="block font-bold text-[#092328] mb-1">Select Obligor (Buyer)</label>
-                {registeredBuyers.length > 0 ? (
-                  <select
-                    value={selectedBuyer}
-                    onChange={e => setSelectedBuyer(e.target.value)}
-                    className="w-full border border-[#ebdca4] bg-[#fffdf5] rounded-xl p-3 text-xs font-semibold"
-                  >
-                    {registeredBuyers.map(b => (
-                      <option key={b.companyParty} value={b.companyParty}>
-                        {b.companyName} ({b.companyParty.split('::')[0]})
-                      </option>
-                    ))}
-                  </select>
-                ) : (
-                  <input
-                    type="text"
-                    placeholder="Enter Buyer Party ID (e.g. DangoteRetail::1220...)"
-                    value={customBuyerParty}
-                    onChange={e => setCustomBuyerParty(e.target.value)}
-                    className="w-full border border-[#ebdca4] bg-[#fffdf5] rounded-xl p-3 font-mono text-xs"
-                    required
-                  />
-                )}
+                <label className="block font-bold text-[#092328] mb-1">Obligor (Buyer) Party ID</label>
+                <input
+                  type="text"
+                  placeholder="Paste full Buyer Party ID (e.g. DangoteRetail::1220…)"
+                  value={customBuyerParty}
+                  onChange={e => setCustomBuyerParty(e.target.value)}
+                  className="w-full border border-[#ebdca4] bg-[#fffdf5] rounded-xl p-3 font-mono text-xs"
+                  required
+                />
               </div>
 
               <div>
@@ -613,19 +776,46 @@ export default function UnifiedTradeDashboard() {
                 <input
                   type="number"
                   value={newAmount}
-                  onChange={e => setNewAmount(Number(e.target.value))}
+                  placeholder="0.00"
+                  onChange={e => setNewAmount(e.target.value === '' ? '' : Number(e.target.value))}
                   className="w-full border border-[#ebdca4] bg-[#fffdf5] rounded-xl p-3 font-mono text-base font-extrabold text-[#092328]"
                   required
+                  min={1}
                 />
+              </div>
+
+              <div className="flex gap-4">
+                <div className="flex-1">
+                  <label className="block font-bold text-[#092328] mb-1">Total Quantity</label>
+                  <input
+                    type="number"
+                    value={newQuantity}
+                    placeholder="e.g. 5"
+                    onChange={e => setNewQuantity(e.target.value === '' ? '' : Number(e.target.value))}
+                    className="w-full border border-[#ebdca4] bg-[#fffdf5] rounded-xl p-3 text-xs"
+                    required
+                    min={1}
+                  />
+                </div>
+                <div className="flex-1">
+                  <label className="block font-bold text-[#092328] mb-1">Total Weight / Unit <span className="font-normal text-[#092328]/60">(Optional)</span></label>
+                  <input
+                    type="text"
+                    value={newWeight}
+                    placeholder="e.g. 500 kg"
+                    onChange={e => setNewWeight(e.target.value)}
+                    className="w-full border border-[#ebdca4] bg-[#fffdf5] rounded-xl p-3 text-xs"
+                  />
+                </div>
               </div>
 
               <div>
                 <label className="block font-bold text-[#092328] mb-1">Description / Goods Specification</label>
-                <input
-                  type="text"
+                <textarea
                   value={newDesc}
                   onChange={e => setNewDesc(e.target.value)}
-                  className="w-full border border-[#ebdca4] bg-[#fffdf5] rounded-xl p-3 text-xs"
+                  rows={3}
+                  className="w-full border border-[#ebdca4] bg-[#fffdf5] rounded-xl p-3 text-xs resize-y"
                   required
                 />
               </div>
@@ -634,15 +824,27 @@ export default function UnifiedTradeDashboard() {
                 <button
                   type="button"
                   onClick={() => setShowCreateModal(false)}
-                  className="px-4 py-2.5 border border-[#ebdca4] rounded-xl text-[#092328] font-bold cursor-pointer"
+                  disabled={isSubmittingInvoice}
+                  className="px-4 py-2.5 border border-[#ebdca4] rounded-xl text-[#092328] font-bold cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
                 >
                   Cancel
                 </button>
                 <button
                   type="submit"
-                  className="px-5 py-2.5 bg-[#76C457] hover:bg-[#67b049] text-[#092328] rounded-xl font-black cursor-pointer"
+                  disabled={isSubmittingInvoice}
+                  className="px-5 py-2.5 bg-[#76C457] hover:bg-[#67b049] text-[#092328] rounded-xl font-black cursor-pointer disabled:opacity-70 disabled:cursor-not-allowed flex items-center justify-center min-w-[180px]"
                 >
-                  Sign & Submit Invoice
+                  {isSubmittingInvoice ? (
+                    <span className="flex items-center gap-2">
+                      <svg className="animate-spin h-4 w-4 text-[#092328]" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                      </svg>
+                      Submitting...
+                    </span>
+                  ) : (
+                    'Sign & Submit Invoice'
+                  )}
                 </button>
               </div>
             </form>
@@ -653,7 +855,7 @@ export default function UnifiedTradeDashboard() {
       {/* Modal 2: Confirm Obligation (Buyer) */}
       {confirmModalInvoice && (
         <div className="fixed inset-0 z-50 bg-[#092328]/60 backdrop-blur-xs flex items-center justify-center p-4">
-          <div className="bg-[#FDF4D2] rounded-3xl max-w-md w-full p-8 shadow-2xl border border-[#ebdca4]">
+          <div className="bg-[#FDF4D2] rounded-3xl max-w-lg w-full p-8 shadow-2xl border border-[#ebdca4]">
             <h2 className="text-xl font-extrabold text-[#092328] mb-2">Acknowledge Commercial Debt</h2>
             <p className="text-xs text-[#092328]/80 mb-4">
               Formally sign the obligation. Financiers will be able to verify this commitment.
@@ -671,15 +873,27 @@ export default function UnifiedTradeDashboard() {
               <div className="flex justify-end gap-2 pt-2">
                 <button
                   onClick={() => setConfirmModalInvoice(null)}
-                  className="px-4 py-2.5 border border-[#ebdca4] rounded-xl text-[#092328] font-bold cursor-pointer"
+                  disabled={isConfirming}
+                  className="px-4 py-2.5 border border-[#ebdca4] rounded-xl text-[#092328] font-bold cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
                 >
                   Cancel
                 </button>
                 <button
                   onClick={() => handleConfirmInvoice(confirmModalInvoice)}
-                  className="px-5 py-2.5 bg-[#76C457] hover:bg-[#67b049] text-[#092328] rounded-xl font-black cursor-pointer"
+                  disabled={isConfirming}
+                  className="px-5 py-2.5 bg-[#76C457] hover:bg-[#67b049] text-[#092328] rounded-xl font-black cursor-pointer disabled:opacity-70 disabled:cursor-not-allowed flex items-center justify-center min-w-[150px]"
                 >
-                  Sign Obligation
+                  {isConfirming ? (
+                    <span className="flex items-center gap-2">
+                      <svg className="animate-spin h-4 w-4 text-[#092328]" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                      </svg>
+                      Signing...
+                    </span>
+                  ) : (
+                    'Sign Obligation'
+                  )}
                 </button>
               </div>
             </div>
@@ -690,11 +904,9 @@ export default function UnifiedTradeDashboard() {
       {/* Modal 3: Confirm Delivery (Buyer) */}
       {deliveryModalInvoice && (
         <div className="fixed inset-0 z-50 bg-[#092328]/60 backdrop-blur-xs flex items-center justify-center p-4">
-          <div className="bg-[#FDF4D2] rounded-3xl max-w-md w-full p-8 shadow-2xl border border-[#ebdca4]">
-            <h2 className="text-xl font-extrabold text-[#092328] mb-2">Certify Fulfillment & Delivery</h2>
-            <p className="text-xs text-[#092328]/80 mb-4">
-              Confirm delivery and record a SHA-256 document hash. This form does not upload the document; provide its existing durable storage reference.
-            </p>
+          <div className="bg-[#FDF4D2] rounded-3xl max-w-lg w-full p-8 shadow-2xl border border-[#ebdca4]">
+            <h2 className="text-xl font-extrabold text-[#092328] mb-4">Certify Fulfillment & Delivery</h2>
+            
             <div className="space-y-4 text-xs">
               <div>
                 <label className="block font-bold text-[#092328] mb-1">Delivery Inspection Remarks</label>
@@ -706,15 +918,17 @@ export default function UnifiedTradeDashboard() {
                 />
               </div>
               <div>
-                <label className="block font-bold text-[#092328] mb-1">Delivery document</label>
+                <label className="block font-bold text-[#092328] mb-1">Delivery document (Local File)</label>
+                <p className="text-[10px] text-[#092328]/60 mb-2 leading-tight">Select the physical waybill/receipt. The file is never uploaded; the app simply calculates its secure SHA-256 cryptographic hash locally to record on the ledger.</p>
                 <input
                   type="file"
                   onChange={(event) => setDeliveryFile(event.target.files?.[0] || null)}
-                  className="w-full border border-[#ebdca4] bg-[#fffdf5] rounded-xl p-3 text-xs"
+                  className="w-full border border-[#ebdca4] bg-[#fffdf5] rounded-xl p-3 text-xs cursor-pointer"
                 />
               </div>
               <div>
-                <label className="block font-bold text-[#092328] mb-1">Document storage reference</label>
+                <label className="block font-bold text-[#092328] mb-1">Document Link (URL)</label>
+                <p className="text-[10px] text-[#092328]/60 mb-2 leading-tight">Add a link to the hosted document (e.g., Google Drive).</p>
                 <input
                   type="text"
                   value={deliveryReference}
@@ -723,18 +937,30 @@ export default function UnifiedTradeDashboard() {
                   className="w-full border border-[#ebdca4] bg-[#fffdf5] rounded-xl p-3 font-mono text-xs"
                 />
               </div>
-              <div className="flex justify-end gap-2 pt-2">
+              <div className="flex justify-end gap-2 pt-4">
                 <button
                   onClick={() => setDeliveryModalInvoice(null)}
-                  className="px-4 py-2.5 border border-[#ebdca4] rounded-xl text-[#092328] font-bold cursor-pointer"
+                  disabled={isDelivering}
+                  className="px-4 py-2.5 border border-[#ebdca4] rounded-xl text-[#092328] font-bold cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
                 >
                   Cancel
                 </button>
                 <button
                   onClick={() => handleConfirmDelivery(deliveryModalInvoice)}
-                  className="px-5 py-2.5 bg-[#76C457] hover:bg-[#67b049] text-[#092328] rounded-xl font-black cursor-pointer"
+                  disabled={isDelivering}
+                  className="px-5 py-2.5 bg-[#76C457] hover:bg-[#67b049] text-[#092328] rounded-xl font-black cursor-pointer disabled:opacity-70 disabled:cursor-not-allowed flex items-center justify-center min-w-[160px]"
                 >
-                  Certify Delivery
+                  {isDelivering ? (
+                    <span className="flex items-center gap-2">
+                      <svg className="animate-spin h-4 w-4 text-[#092328]" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                      </svg>
+                      Certifying...
+                    </span>
+                  ) : (
+                    'Certify Delivery'
+                  )}
                 </button>
               </div>
             </div>
@@ -745,7 +971,7 @@ export default function UnifiedTradeDashboard() {
       {/* Modal 4: Request Financing (Supplier) */}
       {showFinancingModal && (
         <div className="fixed inset-0 z-50 bg-[#092328]/60 backdrop-blur-xs flex items-center justify-center p-4">
-          <div className="bg-[#FDF4D2] rounded-3xl max-w-md w-full p-8 shadow-2xl border border-[#ebdca4]">
+          <div className="bg-[#FDF4D2] rounded-3xl max-w-lg w-full p-8 shadow-2xl border border-[#ebdca4]">
             <h2 className="text-xl font-extrabold text-[#092328] mb-2">Request Invoice Financing</h2>
             <p className="text-xs text-[#092328]/80 mb-4">
               Publish a financing request for invoice <strong>{showFinancingModal}</strong> to verified institutional financiers.
@@ -755,6 +981,8 @@ export default function UnifiedTradeDashboard() {
                 <label className="block font-bold text-[#092328] mb-1">Target Advance Capital (₦)</label>
                 <input
                   type="number"
+                  min={1}
+                  max={financingInvoice?.amount}
                   value={maxFundingInput}
                   onChange={e => setMaxFundingInput(Number(e.target.value))}
                   className="w-full border border-[#ebdca4] bg-[#fffdf5] rounded-xl p-3 font-mono text-base font-extrabold text-[#092328]"
@@ -763,15 +991,27 @@ export default function UnifiedTradeDashboard() {
               <div className="flex justify-end gap-2 pt-2">
                 <button
                   onClick={() => setShowFinancingModal(null)}
-                  className="px-4 py-2.5 border border-[#ebdca4] rounded-xl text-[#092328] font-bold cursor-pointer"
+                  disabled={isRequestingFinance}
+                  className="px-4 py-2.5 border border-[#ebdca4] rounded-xl text-[#092328] font-bold cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
                 >
                   Cancel
                 </button>
                 <button
                   onClick={() => handleRequestFinancing(showFinancingModal)}
-                  className="px-5 py-2.5 bg-[#76C457] hover:bg-[#67b049] text-[#092328] rounded-xl font-black cursor-pointer"
+                  disabled={isRequestingFinance}
+                  className="px-5 py-2.5 bg-[#76C457] hover:bg-[#67b049] text-[#092328] rounded-xl font-black cursor-pointer disabled:opacity-70 disabled:cursor-not-allowed flex items-center justify-center min-w-[180px]"
                 >
-                  Broadcast Request
+                  {isRequestingFinance ? (
+                    <span className="flex items-center gap-2">
+                      <svg className="animate-spin h-4 w-4 text-[#092328]" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                      </svg>
+                      Broadcasting...
+                    </span>
+                  ) : (
+                    'Broadcast Request'
+                  )}
                 </button>
               </div>
             </div>
@@ -810,11 +1050,11 @@ export default function UnifiedTradeDashboard() {
                     <div className="grid grid-cols-2 gap-2 text-xs font-mono">
                       <div>
                         <span className="text-gray-500 block text-[10px]">Funding Advance</span>
-                        <strong className="text-base text-[#092328] font-black">₦{offer.fundingAmount.toLocaleString()}</strong>
+                        <strong className="text-base text-[#092328] font-black">₦{Number(offer.fundingAmount).toLocaleString()}</strong>
                       </div>
                       <div>
                         <span className="text-gray-500 block text-[10px]">Fee / Return</span>
-                        <strong className="text-base text-[#2b6819] font-bold">₦{offer.financingFee.toLocaleString()}</strong>
+                        <strong className="text-base text-[#2b6819] font-bold">₦{Number(offer.financingFee).toLocaleString()}</strong>
                       </div>
                     </div>
 
@@ -822,9 +1062,20 @@ export default function UnifiedTradeDashboard() {
 
                     <button
                       onClick={() => handleAcceptOffer(offer.offerId)}
-                      className="w-full bg-[#76C457] hover:bg-[#67b049] text-[#092328] font-black py-2.5 rounded-xl text-xs shadow-xs transition-colors cursor-pointer"
+                      disabled={isAcceptingOffer}
+                      className="w-full bg-[#76C457] hover:bg-[#67b049] text-[#092328] font-black py-2.5 rounded-xl text-xs shadow-xs transition-colors cursor-pointer disabled:opacity-70 disabled:cursor-not-allowed flex items-center justify-center min-h-[36px]"
                     >
-                      Accept Bid & Lock Receivable
+                      {isAcceptingOffer ? (
+                        <span className="flex items-center gap-2">
+                          <svg className="animate-spin h-3.5 w-3.5 text-[#092328]" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                            <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                            <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                          </svg>
+                          Processing...
+                        </span>
+                      ) : (
+                        'Accept Bid & Lock Receivable'
+                      )}
                     </button>
                   </div>
                 ))}
@@ -846,11 +1097,18 @@ export default function UnifiedTradeDashboard() {
             <p className="text-xs text-[#092328]/80 mb-4">
               Quote economic terms for invoice <strong>{offerModalInvoice}</strong>.
             </p>
+            {activeOfferRequest && (
+              <p className="mb-4 rounded-xl border border-[#ebdca4] bg-[#fffdf5] p-3 text-xs text-[#092328]/75">
+                Supplier requested up to ₦{Number(activeOfferRequest.maxFundingRequested).toLocaleString()} against an invoice of ₦{Number(activeOfferRequest.invoiceAmount).toLocaleString()}.
+              </p>
+            )}
             <div className="space-y-4 text-xs">
               <div>
                 <label className="block font-bold text-[#092328] mb-1">Upfront Funding Amount (₦)</label>
                 <input
                   type="number"
+                  min={1}
+                  max={activeOfferRequest?.maxFundingRequested}
                   value={fundingAmount}
                   onChange={e => setFundingAmount(Number(e.target.value))}
                   className="w-full border border-[#ebdca4] bg-[#fffdf5] rounded-xl p-3 text-base font-extrabold text-[#092328]"
@@ -860,6 +1118,8 @@ export default function UnifiedTradeDashboard() {
                 <label className="block font-bold text-[#092328] mb-1">Financing Return / Fee (₦)</label>
                 <input
                   type="number"
+                  min={0}
+                  max={activeOfferRequest ? activeOfferRequest.invoiceAmount - fundingAmount : undefined}
                   value={financingFee}
                   onChange={e => setFinancingFee(Number(e.target.value))}
                   className="w-full border border-[#ebdca4] bg-[#fffdf5] rounded-xl p-3 text-base font-extrabold text-[#2b6819]"
@@ -877,15 +1137,27 @@ export default function UnifiedTradeDashboard() {
               <div className="flex justify-end gap-2 pt-2">
                 <button
                   onClick={() => setOfferModalInvoice(null)}
-                  className="px-4 py-2.5 border border-[#ebdca4] rounded-xl text-[#092328] font-bold cursor-pointer"
+                  disabled={isMakingOffer}
+                  className="px-4 py-2.5 border border-[#ebdca4] rounded-xl text-[#092328] font-bold cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
                 >
                   Cancel
                 </button>
                 <button
                   onClick={() => handleMakeOffer(offerModalInvoice)}
-                  className="px-5 py-2.5 bg-[#76C457] hover:bg-[#67b049] text-[#092328] rounded-xl font-black cursor-pointer"
+                  disabled={isMakingOffer}
+                  className="px-5 py-2.5 bg-[#76C457] hover:bg-[#67b049] text-[#092328] rounded-xl font-black cursor-pointer disabled:opacity-70 disabled:cursor-not-allowed flex items-center justify-center min-w-[210px]"
                 >
-                  Submit Financing Offer
+                  {isMakingOffer ? (
+                    <span className="flex items-center gap-2">
+                      <svg className="animate-spin h-4 w-4 text-[#092328]" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                      </svg>
+                      Submitting...
+                    </span>
+                  ) : (
+                    'Submit Financing Offer'
+                  )}
                 </button>
               </div>
             </div>
@@ -896,10 +1168,10 @@ export default function UnifiedTradeDashboard() {
       {/* Modal 6: Settle Obligation */}
       {settleModalInvoice && settlingInvoiceItem && settlingAgreement && (
         <div className="fixed inset-0 z-50 bg-[#092328]/60 backdrop-blur-xs flex items-center justify-center p-4">
-          <div className="bg-[#FDF4D2] rounded-3xl max-w-md w-full p-8 shadow-2xl border border-[#ebdca4]">
+          <div className="bg-[#FDF4D2] rounded-3xl max-w-lg w-full p-8 shadow-2xl border border-[#ebdca4]">
             <h2 className="text-xl font-extrabold text-[#092328] mb-2">Settle Commercial Obligation</h2>
             <p className="text-xs text-[#092328]/80 mb-4">
-              Record the buyer&apos;s payment reference for <strong>₦{settlingInvoiceItem.payload.amount.toLocaleString()}</strong>. This does not initiate or transfer funds.
+              Record the buyer&apos;s payment reference for <strong>₦{Number(settlingInvoiceItem.payload.amount).toLocaleString()}</strong>. This does not initiate or transfer funds.
             </p>
             <div className="space-y-4 text-xs">
               <div>
@@ -914,25 +1186,37 @@ export default function UnifiedTradeDashboard() {
               <div className="bg-[#f6e9bc] p-4 rounded-xl border border-[#ebdca4] text-xs text-[#092328] font-mono space-y-1.5">
                 <div className="flex justify-between">
                   <span>Financier Allocation:</span>
-                  <strong className="text-sm font-black text-[#2b6819]">₦{settlingAgreement.totalRepaymentToFinancier.toLocaleString()}</strong>
+                  <strong className="text-sm font-black text-[#2b6819]">₦{Number(settlingAgreement.totalRepaymentToFinancier).toLocaleString()}</strong>
                 </div>
                 <div className="flex justify-between">
                   <span>Supplier Remainder:</span>
-                  <strong className="text-sm font-black text-[#2b6819]">₦{(settlingInvoiceItem.payload.amount - settlingAgreement.fundingAmount).toLocaleString()}</strong>
+                  <strong className="text-sm font-black text-[#2b6819]">₦{(Number(settlingInvoiceItem.payload.amount) - Number(settlingAgreement.totalRepaymentToFinancier)).toLocaleString()}</strong>
                 </div>
               </div>
               <div className="flex justify-end gap-2 pt-3">
                 <button
                   onClick={() => setSettleModalInvoice(null)}
-                  className="px-4 py-2.5 border border-[#ebdca4] rounded-xl text-[#092328] font-bold cursor-pointer"
+                  disabled={isSettling}
+                  className="px-4 py-2.5 border border-[#ebdca4] rounded-xl text-[#092328] font-bold cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
                 >
                   Cancel
                 </button>
                 <button
                   onClick={() => handleSettle(settleModalInvoice)}
-                  className="px-5 py-2.5 bg-[#76C457] hover:bg-[#67b049] text-[#092328] rounded-xl font-black cursor-pointer"
+                  disabled={isSettling}
+                  className="px-5 py-2.5 bg-[#76C457] hover:bg-[#67b049] text-[#092328] rounded-xl font-black cursor-pointer disabled:opacity-70 disabled:cursor-not-allowed flex items-center justify-center min-w-[210px]"
                 >
-                  Record Settlement on Canton
+                  {isSettling ? (
+                    <span className="flex items-center gap-2">
+                      <svg className="animate-spin h-4 w-4 text-[#092328]" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                      </svg>
+                      Recording...
+                    </span>
+                  ) : (
+                    'Record Settlement on Canton'
+                  )}
                 </button>
               </div>
             </div>
@@ -946,12 +1230,12 @@ export default function UnifiedTradeDashboard() {
         onClose={() => setSelectedPassport(null)}
       />
 
-      {/* Connect Wallet Modal */}
-      <ConnectWalletModal
-        isOpen={isWalletModalOpen}
-        onClose={() => setIsWalletModalOpen(false)}
-        currentParty={store.getCurrentParty() || 'Not Connected'}
-        onSelectParty={(partyId) => store.connectParty(partyId)}
+      {/* Connect to the Canton Ledger API */}
+      <ConnectCantonModal
+        isOpen={isConnectionModalOpen}
+        onClose={() => setIsConnectionModalOpen(false)}
+        currentParty={store.getCurrentParty()}
+        onConnect={(partyId, accessToken) => store.connectParty(partyId, accessToken)}
       />
 
     </div>

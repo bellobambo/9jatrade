@@ -3,7 +3,7 @@
 import { useState } from 'react';
 import Link from 'next/link';
 import { Navbar } from '@/components/Navbar';
-import { ConnectWalletModal } from '@/components/ConnectWalletModal';
+import { ConnectCantonModal } from '@/components/ConnectCantonModal';
 import { useTradeStore } from '@/lib/services/tradeStore';
 import {
   IconFileText,
@@ -24,7 +24,7 @@ import {
 export default function AboutPage() {
   const store = useTradeStore();
   const currentProfile = store.getCurrentProfile();
-  const [isWalletModalOpen, setIsWalletModalOpen] = useState(false);
+  const [isConnectionModalOpen, setIsConnectionModalOpen] = useState(false);
   const [activeStep, setActiveStep] = useState(1);
 
   const pipelineStages = [
@@ -142,10 +142,10 @@ export default function AboutPage() {
       <Navbar />
 
       {/* Main Content Container */}
-      <main className="flex-1 max-w-7xl mx-auto w-full px-4 sm:px-6 lg:px-8 py-10 sm:py-16">
+      <main className="flex-1 w-full px-4 sm:px-6 lg:px-8 py-10 sm:py-16">
 
         {/* Page Header */}
-        <div className="text-center max-w-3xl mx-auto mb-14 sm:mb-20">
+        <div className="w-full text-center mb-14 sm:mb-20">
           <div className="inline-flex items-center gap-2 bg-[#f4e6b1] border border-[#ebdca4] px-4 py-1.5 rounded-full text-xs font-bold text-[#092328] mb-4 shadow-xs">
             <span className="w-2 h-2 rounded-full bg-[#76C457]"></span>
             Product Architecture &amp; User Journey
@@ -158,6 +158,7 @@ export default function AboutPage() {
           </p>
         </div>
 
+        <div className="mx-auto w-full max-w-6xl">
         {/* 1. The Core Principle in Plain English */}
         <section className="bg-[#092328] text-white rounded-3xl p-6 sm:p-10 mb-16 border border-[#144852] shadow-2xl relative overflow-hidden">
           <div className="absolute top-0 right-0 w-96 h-96 bg-[#76C457]/10 rounded-full blur-3xl pointer-events-none" />
@@ -630,7 +631,7 @@ export default function AboutPage() {
             Ready to Accelerate Your Working Capital?
           </h2>
           <p className="text-sm sm:text-base text-gray-300 max-w-2xl mx-auto mb-8 leading-relaxed">
-            Connect your wallet to register your company and start issuing or financing verified commercial obligations.
+            Connect with your HackCanton Ledger access token and allocated party to register your company and start issuing or financing verified commercial obligations.
           </p>
 
           <div className="flex flex-wrap items-center justify-center gap-4">
@@ -643,10 +644,10 @@ export default function AboutPage() {
               </Link>
             ) : (
               <button
-                onClick={() => setIsWalletModalOpen(true)}
+                onClick={() => setIsConnectionModalOpen(true)}
                 className="bg-[#76C457] hover:bg-[#67b049] text-[#092328] font-black text-sm px-6 py-3 rounded-full transition-all shadow-md cursor-pointer"
               >
-                Connect Wallet to Begin &rarr;
+                Connect to Ledger to Begin &rarr;
               </button>
             )}
 
@@ -658,15 +659,16 @@ export default function AboutPage() {
             </Link>
           </div>
         </section>
+        </div>
 
       </main>
 
-      {/* Connect Wallet Modal */}
-      <ConnectWalletModal
-        isOpen={isWalletModalOpen}
-        onClose={() => setIsWalletModalOpen(false)}
-        currentParty={store.getCurrentParty() || 'Not Connected'}
-        onSelectParty={(partyId) => store.connectParty(partyId)}
+      {/* Connect to the Canton Ledger API */}
+      <ConnectCantonModal
+        isOpen={isConnectionModalOpen}
+        onClose={() => setIsConnectionModalOpen(false)}
+        currentParty={store.getCurrentParty()}
+        onConnect={(partyId, accessToken) => store.connectParty(partyId, accessToken)}
       />
 
       {/* Footer */}

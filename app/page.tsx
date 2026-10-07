@@ -1,19 +1,19 @@
 'use client';
 
-import { useContext, useState } from 'react';
+import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import toast from 'react-hot-toast';
-import { CantonWalletContext } from '@/components/CantonWalletProvider';
 import { useTradeStore, TrustPassportData } from '@/lib/services/tradeStore';
 import { TrustPassportModal } from '@/components/TrustPassportModal';
-import { ConnectWalletModal } from '@/components/ConnectWalletModal';
+import { ConnectCantonModal } from '@/components/ConnectCantonModal';
 import {
     IconFileText,
     IconBuilding,
     IconBank,
     IconArrowRight,
     IconCopy,
+    IconCoins,
 } from '@/components/Icons';
 
 export default function Home() {
@@ -22,41 +22,51 @@ export default function Home() {
     const invoices = store.getInvoices();
     const currentProfile = store.getCurrentProfile();
     const currentParty = store.getCurrentParty();
-    const { disconnectWallet, walletBalance, walletBalanceLoading, walletNetwork } = useContext(CantonWalletContext);
-
+    const restoringConnection = store.isRestoringConnection();
+    const tokenBalance = store.getTokenBalance();
+    const tokenBalanceError = store.getTokenBalanceError();
+    const tokenBalanceLoading = store.isTokenBalanceLoading();
     const [selectedPassport, setSelectedPassport] = useState<TrustPassportData | null>(null);
-    const [isWalletModalOpen, setIsWalletModalOpen] = useState(false);
+    const [isConnectionModalOpen, setIsConnectionModalOpen] = useState(false);
+
+    useEffect(() => {
+        if (!currentParty) return;
+        const refreshInterval = window.setInterval(() => {
+            void store.refreshTokenBalance();
+        }, 60_000);
+        return () => window.clearInterval(refreshInterval);
+    }, [currentParty, store]);
 
     const demoInvoice = invoices[0]?.payload;
     const demoPassport = demoInvoice ? store.getTrustPassport(demoInvoice.invoiceId) : null;
 
-    const handleWalletButtonClick = async () => {
+    const handleConnectionButtonClick = async () => {
         if (!currentParty) {
-            setIsWalletModalOpen(true);
+            setIsConnectionModalOpen(true);
             return;
         }
 
         try {
-            await disconnectWallet();
-            setIsWalletModalOpen(false);
+            store.disconnectParty();
+            setIsConnectionModalOpen(false);
         } catch (error) {
-            toast.error(error instanceof Error ? error.message : 'Unable to disconnect wallet.');
+            toast.error(error instanceof Error ? error.message : 'Unable to disconnect from the Ledger.');
         }
     };
 
-    const handleLandingConnect = async (partyId: string) => {
-        await store.connectParty(partyId);
+    const handleLandingConnect = async (partyId: string, accessToken: string) => {
+        await store.connectParty(partyId, accessToken);
         store.setPendingRegistrationType('commercial');
         router.push('/register');
     };
 
-    const handleCopyWallet = async () => {
+    const handleCopyParty = async () => {
         if (!currentParty) return;
         try {
             await navigator.clipboard.writeText(currentParty);
-            toast.success('Wallet address copied.');
+            toast.success('Party ID copied.');
         } catch {
-            toast.error('Unable to copy wallet address.');
+            toast.error('Unable to copy party ID.');
         }
     };
 
@@ -84,7 +94,7 @@ export default function Home() {
                             <IconArrowRight className="w-3 h-3 text-[#76C457]" />
                         </Link>
 
-                        {/* If wallet connected but NOT verified -> show Register */}
+                        {/* If a party is connected but NOT verified -> show Register */}
                         {currentProfile && !currentProfile.isVerified && (
                             <Link
                                 href="/register"
@@ -106,33 +116,37 @@ export default function Home() {
                     </nav>
 
                     {currentParty && (
-                        <div className="hidden items-center gap-1.5 text-[10px] font-bold text-gray-200 sm:flex">
-                            <span className="rounded-md border border-[#1f5763] bg-[#0f3942] px-2 py-1 uppercase text-[#76C457]">
-                                {walletNetwork ?? 'unknown'}
-                            </span>
-                            <span className="max-w-[110px] truncate rounded-md border border-[#1f5763] bg-[#0f3942] px-2 py-1">
-                                {walletBalanceLoading ? 'Balance...' : walletBalance ?? 'Balance unavailable'}
+                        <div
+                            className="flex items-center gap-1 rounded-md border border-[#1f5763] bg-[#0f3942] px-2 py-1.5 text-[10px] font-bold text-[#76C457]"
+                            title={tokenBalanceError ?? 'Canton Coin balance for the connected party'}
+                            aria-live="polite"
+                        >
+                            <IconCoins className="h-3.5 w-3.5 shrink-0" />
+                            <span className="whitespace-nowrap">
+                                {tokenBalanceLoading ? 'Loading CC...' : tokenBalance ?? 'CC unavailable'}
                             </span>
                         </div>
                     )}
 
                     {/* Party Connection / Profile Button */}
                     <button
-                        onClick={() => { void handleWalletButtonClick(); }}
-                        className="bg-[#76C457] hover:bg-[#67b049] text-[#092328] font-black text-xs px-3.5 py-1.5 rounded-md shadow-sm transition-all flex items-center gap-1.5 cursor-pointer"
+                        onClick={() => { void handleConnectionButtonClick(); }}
+                        disabled={restoringConnection}
+                        title={store.getError() ?? undefined}
+                        className="bg-[#76C457] hover:bg-[#67b049] text-[#092328] font-black text-xs px-3.5 py-1.5 rounded-md shadow-sm transition-all flex items-center gap-1.5 cursor-pointer disabled:cursor-wait disabled:opacity-75"
                     >
                         <span className={`w-2 h-2 rounded-full ${currentParty ? 'bg-[#092328]' : 'bg-[#092328] animate-pulse'}`}></span>
                         <span className="truncate max-w-[100px] sm:max-w-[130px]">
-                            {currentProfile ? (currentProfile.isVerified ? currentProfile.companyName : 'Wallet Connected') : currentParty ? 'Wallet Connected' : 'Connect Wallet'}
+                            {currentProfile ? (currentProfile.isVerified ? currentProfile.companyName : 'Ledger Connected') : currentParty ? 'Ledger Connected' : restoringConnection ? 'Restoring Ledger...' : 'Connect to Ledger'}
                         </span>
                     </button>
 
                     {currentParty && (
                         <button
                             type="button"
-                            onClick={() => { void handleCopyWallet(); }}
-                            title="Copy wallet address"
-                            aria-label="Copy wallet address"
+                            onClick={() => { void handleCopyParty(); }}
+                            title="Copy party ID"
+                            aria-label="Copy party ID"
                             className="flex h-8 w-8 cursor-pointer items-center justify-center rounded-md border border-[#1f5763] bg-[#0f3942] text-[#76C457] transition-colors hover:bg-[#174b55]"
                         >
                             <IconCopy className="h-3.5 w-3.5" />
@@ -142,7 +156,7 @@ export default function Home() {
             </div>
 
             {/* 2. Hero Section (matching the exact layout, typography, and charm of image.png) */}
-            <section className="relative pt-32 sm:pt-40 lg:pt-48 pb-16 px-4 sm:px-6 lg:px-8 max-w-6xl mx-auto w-full text-center flex flex-col items-center justify-center">
+            <section className="relative pt-32 sm:pt-40 lg:pt-48 pb-16 px-4 sm:px-6 lg:px-8 w-full text-center flex flex-col items-center justify-center">
 
                 {/* Live indicator tag */}
                 <div className="inline-flex items-center gap-2 bg-[#f4e6b1] border border-[#ebdca4] px-4 py-1.5 rounded-full text-xs font-bold text-[#092328] mb-8 shadow-xs animate-fade-in">
@@ -265,11 +279,11 @@ export default function Home() {
                             )
                         ) : (
                             <button
-                                onClick={() => setIsWalletModalOpen(true)}
+                                onClick={() => setIsConnectionModalOpen(true)}
                                 className="bg-[#092328] hover:bg-[#10363e] text-white px-7 sm:px-9 py-4 sm:py-4.5 rounded-md border border-[#174b55] shadow-2xl flex items-center gap-4 transition-all transform group-hover:scale-[1.02] active:scale-[0.99] cursor-pointer"
                             >
                                 <span className="font-extrabold text-sm sm:text-base text-gray-200">
-                                    Connect Wallet
+                                    Connect to Canton DevNet
                                 </span>
                                 <div className="w-12 h-6.5 bg-[#163f47] rounded-full p-1 flex items-center border border-[#1f5763]">
                                     <div className="w-4.5 h-4.5 rounded-full bg-[#76C457] shadow-md transform translate-x-5 transition-transform group-hover:translate-x-5" />
@@ -297,7 +311,7 @@ export default function Home() {
             </section>
 
             {/* 3. The 3 Main Roles (Simplified, Human-Friendly, No Buttons) */}
-            <section className="pt-8 pb-20 px-4 sm:px-6 lg:px-8 max-w-7xl mx-auto w-full">
+            <section className="pt-8 pb-20 px-4 sm:px-6 lg:px-8 max-w-6xl mx-auto w-full">
 
                 {/* Section Header */}
                 <div className="text-center max-w-2xl mx-auto mb-12">
@@ -458,12 +472,12 @@ export default function Home() {
                 onClose={() => setSelectedPassport(null)}
             />
 
-            {/* Connect Wallet Modal */}
-            <ConnectWalletModal
-                isOpen={isWalletModalOpen}
-                onClose={() => setIsWalletModalOpen(false)}
-                currentParty={store.getCurrentParty() || 'Not Connected'}
-                onSelectParty={handleLandingConnect}
+            {/* Connect to Canton DevNet */}
+            <ConnectCantonModal
+                isOpen={isConnectionModalOpen}
+                onClose={() => setIsConnectionModalOpen(false)}
+                currentParty={store.getCurrentParty()}
+                onConnect={handleLandingConnect}
             />
 
             {/* Footer */}

@@ -6,7 +6,7 @@ import toast from 'react-hot-toast';
 import { Navbar } from '@/components/Navbar';
 import { useTradeStore } from '@/lib/services/tradeStore';
 import { CompanyRole } from '@/lib/canton/types';
-import { ConnectWalletModal } from '@/components/ConnectWalletModal';
+import { ConnectCantonModal } from '@/components/ConnectCantonModal';
 import { IconLock } from '@/components/Icons';
 
 export default function RegisterPage() {
@@ -17,7 +17,7 @@ export default function RegisterPage() {
   const requestsForOperator = registrationRequests.filter(({ payload }) => payload.operator === connectedParty);
   const ownPendingRequest = registrationRequests.find(({ payload }) => payload.applicantParty === connectedParty);
 
-  const [isWalletModalOpen, setIsWalletModalOpen] = useState(false);
+  const [isConnectionModalOpen, setIsConnectionModalOpen] = useState(false);
 
   // Registration Type comes from global store instead of URL params
   const registrationType = store.getPendingRegistrationType();
@@ -34,6 +34,7 @@ export default function RegisterPage() {
   const [finCac, setFinCac] = useState('');
 
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [isRefreshing, setIsRefreshing] = useState(false);
 
   const showToast = (message: string, type: 'success' | 'error' = 'success') => {
     if (type === 'error') toast.error(message);
@@ -101,12 +102,34 @@ export default function RegisterPage() {
     }
   };
 
+  const handleRefresh = async () => {
+    setIsRefreshing(true);
+    try {
+      await store.refresh();
+      if (store.getError()) throw new Error(store.getError() ?? 'Unable to refresh the Canton ledger.');
+      showToast('Registration status refreshed.');
+    } catch (err) {
+      showToast(err instanceof Error ? err.message : 'Unable to refresh registration status.', 'error');
+    } finally {
+      setIsRefreshing(false);
+    }
+  };
+
+  const handleCopyContractId = async (contractId: string) => {
+    try {
+      await navigator.clipboard.writeText(contractId);
+      showToast('Ledger contract ID copied.');
+    } catch {
+      showToast('Unable to copy the ledger contract ID.', 'error');
+    }
+  };
+
   return (
     <div className="flex flex-col min-h-screen bg-[#FDF4D2] text-[#092328] font-sans">
       <Navbar />
 
       {/* Main Registration Container */}
-      <main className="max-w-2xl mx-auto px-4 sm:px-6 lg:px-8 py-10 w-full flex-1">
+      <main className="w-full flex-1 px-4 sm:px-6 py-8 sm:py-10">
 
         {/* Title & Introduction */}
         <div className="text-left mb-10">
@@ -122,22 +145,23 @@ export default function RegisterPage() {
           </p>
         </div>
 
+        <div className="mx-auto w-full max-w-3xl">
         {requestsForOperator.length > 0 && (
-          <section className="mb-8 border border-[#ebdca4] bg-[#fffdf5] p-6">
+          <section className="mb-8 rounded-2xl border border-[#ebdca4] bg-[#fffdf5] p-6">
             <h2 className="text-lg font-black text-[#092328]">Registration requests</h2>
             <div className="mt-4 divide-y divide-[#ebdca4]">
               {requestsForOperator.map(({ payload, cid }) => (
-                <div key={cid} className="flex flex-col gap-3 py-4 sm:flex-row sm:items-center sm:justify-between">
-                  <div>
+                <div key={cid} className="flex min-w-0 flex-col gap-3 py-4 sm:flex-row sm:items-center sm:justify-between">
+                  <div className="min-w-0 flex-1">
                     <p className="font-bold">{payload.companyName}</p>
-                    <p className="text-xs text-[#092328]/70">{payload.applicantParty} · {payload.requestedRole}</p>
+                    <p className="break-all text-xs text-[#092328]/70">{payload.applicantParty} · {payload.requestedRole}</p>
                     <p className="text-xs text-[#092328]/70">{payload.cacOrRegistrationNumber}</p>
                   </div>
                   <button
                     type="button"
                     onClick={() => handleApproveRegistration(cid)}
                     disabled={isSubmitting}
-                    className="bg-[#092328] px-4 py-2 text-xs font-bold text-[#76C457] disabled:opacity-50"
+                    className="rounded-lg bg-[#092328] px-4 py-2 text-xs font-bold text-[#76C457] disabled:opacity-50"
                   >
                     Approve on Canton
                   </button>
@@ -157,27 +181,68 @@ export default function RegisterPage() {
               Canton Party Required
             </h2>
             <p className="text-xs sm:text-sm text-[#092328]/70 leading-relaxed mb-8">
-              Connect a party allocated by your Canton participant before submitting a registration request.
+              Use the allocated party ID from the NODERS Wallet and a HackCanton Ledger access token before submitting a registration request.
             </p>
             <button
               type="button"
-              onClick={() => setIsWalletModalOpen(true)}
+              onClick={() => setIsConnectionModalOpen(true)}
               className="bg-[#76C457] hover:bg-[#67b049] text-[#092328] font-black text-sm px-8 py-3.5 rounded-md shadow-md hover:shadow-lg transition-all cursor-pointer"
             >
-              Connect Canton Party
+              Connect to Ledger
             </button>
           </div>
         ) : currentProfile ? (
-          <div className="border border-[#ebdca4] bg-[#fffdf5] p-6">
+          <div className="rounded-2xl border border-[#ebdca4] bg-[#fffdf5] p-6">
             <h2 className="text-lg font-black">Company profile active on Canton</h2>
             <p className="mt-2 text-sm">{currentProfile.companyName} · {currentProfile.role}</p>
-            <p className="mt-1 font-mono text-xs text-[#092328]/70">{currentProfile.companyParty}</p>
+            <p className="mt-1 break-all font-mono text-xs text-[#092328]/70">{currentProfile.companyParty}</p>
+            <p className="mt-3 text-sm text-[#092328]/70">Your profile is approved. Open the trade workspace to continue with the actions available to your role.</p>
+            <Link href="/dashboard" className="mt-5 inline-flex rounded-xl bg-[#092328] px-5 py-3 text-sm font-bold text-[#76C457]">
+              Continue to Trade Dashboard
+            </Link>
           </div>
         ) : ownPendingRequest ? (
-          <div className="border border-[#ebdca4] bg-[#fffdf5] p-6">
-            <h2 className="text-lg font-black">Registration awaiting operator approval</h2>
-            <p className="mt-2 text-sm">{ownPendingRequest.payload.companyName} · {ownPendingRequest.payload.requestedRole}</p>
-            <p className="mt-1 font-mono text-xs text-[#092328]/70">{ownPendingRequest.cid}</p>
+          <div className="min-w-0 rounded-2xl border border-[#ebdca4] bg-[#fffdf5] p-5 sm:p-8">
+            <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+              <div className="min-w-0">
+                <span className="inline-flex rounded-full bg-amber-100 px-3 py-1 text-xs font-bold text-amber-900">Approval pending</span>
+                <h2 className="mt-3 text-xl font-black">Registration awaiting operator approval</h2>
+                <p className="mt-2 break-words text-sm">{ownPendingRequest.payload.companyName} · {ownPendingRequest.payload.requestedRole}</p>
+              </div>
+              <button
+                type="button"
+                onClick={() => { void handleRefresh(); }}
+                disabled={isRefreshing || isSubmitting}
+                className="shrink-0 rounded-xl bg-[#092328] px-4 py-2.5 text-xs font-bold text-[#76C457] disabled:cursor-wait disabled:opacity-60"
+              >
+                {isRefreshing ? 'Checking...' : 'Check approval status'}
+              </button>
+            </div>
+            <ol className="mt-6 grid gap-3 md:grid-cols-3">
+              <li className="rounded-xl border border-[#ebdca4] bg-[#FDF4D2] p-4">
+                <span className="text-xs font-black uppercase tracking-wide text-[#2b6819]">1 · Submitted</span>
+                <p className="mt-1 text-sm">Your registration request is recorded on Canton.</p>
+              </li>
+              <li className="rounded-xl border border-[#ebdca4] bg-[#FDF4D2] p-4">
+                <span className="text-xs font-black uppercase tracking-wide text-amber-900">2 · Operator review</span>
+                <p className="mt-1 text-sm">The operator must connect using its authorized party and approve this request.</p>
+              </li>
+              <li className="rounded-xl border border-[#ebdca4] bg-[#FDF4D2] p-4">
+                <span className="text-xs font-black uppercase tracking-wide text-[#092328]">3 · Start trading</span>
+                <p className="mt-1 text-sm">After approval, check status here and continue to the dashboard.</p>
+              </li>
+            </ol>
+            <div className="mt-5 min-w-0 rounded-xl border border-[#ebdca4] bg-white/70 p-4">
+              <p className="text-xs font-bold text-[#092328]/70">Ledger contract ID (reference only — not your party ID)</p>
+              <code className="mt-2 block max-h-24 overflow-y-auto break-all font-mono text-xs leading-relaxed text-[#092328]">{ownPendingRequest.cid}</code>
+              <button
+                type="button"
+                onClick={() => { void handleCopyContractId(ownPendingRequest.cid); }}
+                className="mt-3 rounded-lg border border-[#ebdca4] px-3 py-2 text-xs font-bold text-[#092328] hover:bg-[#FDF4D2]"
+              >
+                Copy contract ID
+              </button>
+            </div>
           </div>
         ) : (
           <>
@@ -335,9 +400,19 @@ export default function RegisterPage() {
                     <button
                       type="submit"
                       disabled={isSubmitting}
-                      className="bg-[#092328] hover:bg-[#133e46] text-[#76C457] font-black text-sm px-8 py-3.5 rounded-xl shadow-md hover:shadow-lg transition-all active:scale-[0.99] disabled:opacity-50"
+                      className="bg-[#092328] hover:bg-[#133e46] text-[#76C457] font-black text-sm px-8 py-3.5 rounded-xl shadow-md hover:shadow-lg transition-all active:scale-[0.99] disabled:opacity-70 disabled:cursor-not-allowed flex items-center justify-center min-w-[160px]"
                     >
-                      {isSubmitting ? 'Submitting...' : 'Submit'}
+                      {isSubmitting ? (
+                        <span className="flex items-center gap-2">
+                          <svg className="animate-spin h-4 w-4 text-[#76C457]" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                            <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                            <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                          </svg>
+                          Submitting...
+                        </span>
+                      ) : (
+                        'Submit'
+                      )}
                     </button>
                   </div>
 
@@ -346,15 +421,16 @@ export default function RegisterPage() {
             )}
           </>
         )}
+        </div>
 
       </main>
 
-      {/* Connect Wallet Modal */}
-      <ConnectWalletModal
-        isOpen={isWalletModalOpen}
-        onClose={() => setIsWalletModalOpen(false)}
-        currentParty={store.getCurrentParty() || 'Not Connected'}
-        onSelectParty={(partyId) => store.connectParty(partyId)}
+      {/* Connect to the Canton Ledger API */}
+      <ConnectCantonModal
+        isOpen={isConnectionModalOpen}
+        onClose={() => setIsConnectionModalOpen(false)}
+        currentParty={store.getCurrentParty()}
+        onConnect={(partyId, accessToken) => store.connectParty(partyId, accessToken)}
       />
 
       {/* Footer */}

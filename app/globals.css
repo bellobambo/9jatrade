@@ -1,5 +1,13 @@
 @import "tailwindcss";
 
+@layer base {
+  button:not(:disabled),
+  a[href],
+  [role="button"]:not([aria-disabled="true"]) {
+    cursor: pointer;
+  }
+}
+
 :root {
   --background: #FDF4D2;
   --foreground: #092328;

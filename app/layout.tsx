@@ -1,5 +1,4 @@
 import type { Metadata } from "next";
-import { CantonWalletProvider } from "@/components/CantonWalletProvider";
 import { ToastProvider } from "@/components/ToastProvider";
 import "./globals.css";
 
@@ -24,9 +23,7 @@ export default function RootLayout({
         />
       </head>
       <body className="min-h-full flex flex-col font-sans">
-        <CantonWalletProvider>
-          {children}
-        </CantonWalletProvider>
+        {children}
         <ToastProvider />
       </body>
     </html>
