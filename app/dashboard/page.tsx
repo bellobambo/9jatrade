@@ -7,7 +7,7 @@ import { Navbar } from '@/components/Navbar';
 import { useTradeStore, TrustPassportData } from '@/lib/services/tradeStore';
 import { TrustPassportModal } from '@/components/TrustPassportModal';
 import { ConnectCantonModal } from '@/components/ConnectCantonModal';
-import { IconExchange, IconFileText, IconBuilding, IconBank, IconLock } from '@/components/Icons';
+import { IconExchange, IconFileText, IconBuilding, IconBank, IconLock, IconCoins, IconClock, IconShield, IconCheckCircle } from '@/components/Icons';
 
 type DashboardTab = 'all' | 'supplier' | 'buyer' | 'financier';
 
@@ -70,10 +70,11 @@ export default function UnifiedTradeDashboard() {
   // Form states
   const [maxFundingInput, setMaxFundingInput] = useState<number | ''>('');
   const [newInvId, setNewInvId] = useState('');
-  const [selectedBuyer, setSelectedBuyer] = useState(registeredBuyers[0]?.companyParty || '');
+  const [selectedBuyer] = useState(registeredBuyers[0]?.companyParty || '');
   const [customBuyerParty, setCustomBuyerParty] = useState('');
   const [newAmount, setNewAmount] = useState<number | ''>('');
   const [newDueDateDays, setNewDueDateDays] = useState<number | ''>('');
+  const [invoiceFormOpenedAt] = useState(() => Date.now());
   const [newDesc, setNewDesc] = useState('');
   const [newQuantity, setNewQuantity] = useState<number | ''>('');
   const [newWeight, setNewWeight] = useState('');
@@ -332,100 +333,149 @@ export default function UnifiedTradeDashboard() {
   const ITEMS_PER_PAGE = 10;
   const totalPages = Math.max(1, Math.ceil(sortedInvoices.length / ITEMS_PER_PAGE));
   const displayedInvoices = sortedInvoices.slice((currentPage - 1) * ITEMS_PER_PAGE, currentPage * ITEMS_PER_PAGE);
+  const totalReceivableValue = uniqueInvoices.reduce((sum, { payload }) => sum + Number(payload.amount || 0), 0);
+  const openFinancingRequests = store.getFinancingRequests().filter((request) => uniqueInvoices.some(({ payload }) => payload.invoiceId === request.invoiceId));
+  const activeAgreementValue = visibleAgreements.reduce((sum, agreement) => sum + Number(agreement.fundingAmount || 0), 0);
+  const pendingActionCount = uniqueInvoices.filter(({ payload: inv }) => (
+    (currentProfile?.role === 'BuyerRole' && inv.buyer === currentParty && (inv.status === 'InvoiceSubmitted' || inv.status === 'InvoiceConfirmed'))
+    || (currentProfile?.role === 'SupplierRole' && inv.supplier === currentParty && (inv.status === 'InvoiceConfirmed' || inv.status === 'InvoiceDelivered'))
+    || (currentProfile?.role === 'FinancierRole' && openFinancingRequests.some((request) => request.invoiceId === inv.invoiceId && request.eligibleFinanciers.includes(currentParty ?? '')))
+  )).length;
+  const roleLabel = currentProfile ? currentProfile.role.replace('Role', '') : 'Network';
+  const connectedCompany = currentProfile ? currentProfile.companyName : 'Connect to view live ledger data';
 
   return (
     <div className="flex flex-col min-h-screen bg-[#FDF4D2] text-[#092328] font-sans">
       <Navbar />
 
-      {/* Dashboard Top Banner */}
-      <div className="bg-[#FDF4D2] border-b border-[#ebdca4]">
-        <div className="w-full px-4 sm:px-6 py-8">
-          <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
-            <div>
-              <div className="flex items-center gap-2">
-                <span className="bg-[#092328] text-[#76C457] text-xs px-3 py-1 rounded-full font-bold uppercase tracking-wider">
-                  {currentProfile ? currentProfile.role.replace('Role', ' Portal') : 'Trade Dashboard'}
-                </span>
-                <span className="text-xs text-[#092328]/60 font-mono">
-                  {currentProfile ? `${currentProfile.companyName} (${currentProfile.cacOrRegistrationNumber})` : 'Unregistered Session'}
-                </span>
+      {/* Dashboard Summary */}
+      <div className="border-b border-[#ebdca4] bg-[#FDF4D2]">
+        <div className="mx-auto w-full max-w-6xl px-4 py-6 sm:px-6 sm:py-8">
+          <section className="overflow-hidden rounded-[28px] border border-[#0d323a] bg-[#092328] text-white shadow-xl">
+            <div className="grid gap-0 lg:grid-cols-[1.15fr_0.85fr]">
+              <div className="p-5 sm:p-8 lg:p-10">
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="inline-flex items-center gap-2 rounded-full bg-[#76C457] px-3 py-1 text-[11px] font-black uppercase tracking-wide text-[#092328]">
+                    <IconShield className="h-3.5 w-3.5" />
+                    {roleLabel} Portal
+                  </span>
+                  <span className="max-w-full truncate rounded-full border border-white/15 bg-white/10 px-3 py-1 font-mono text-[11px] font-bold text-white/75">
+                    {currentProfile ? `${currentProfile.companyName} / ${currentProfile.cacOrRegistrationNumber}` : 'Unregistered session'}
+                  </span>
+                </div>
+
+                <div className="mt-7 max-w-2xl">
+                  <h1 className="text-3xl font-black leading-tight tracking-tight text-white sm:text-4xl">
+                    Trade finance command center
+                  </h1>
+                  <p className="mt-3 text-sm leading-6 text-white/70">
+                    Monitor verified invoices, financing requests, buyer confirmations, and settlement progress from one Canton-backed workspace.
+                  </p>
+                </div>
+
+                <div className="mt-7 flex flex-wrap gap-3">
+                  {currentProfile?.role === 'SupplierRole' && (
+                    <button
+                      onClick={() => { setNewInvId(`INV-${crypto.randomUUID().slice(0, 8).toUpperCase()}`); setNewAmount(''); setNewDesc(''); setNewQuantity(''); setNewWeight(''); setShowCreateModal(true); }}
+                      className="inline-flex min-h-11 items-center gap-2 rounded-xl bg-[#76C457] px-5 py-3 text-sm font-black text-[#092328] shadow-md transition-colors hover:bg-[#67b049]"
+                    >
+                      <IconFileText className="h-4 w-4" />
+                      Issue invoice
+                    </button>
+                  )}
+                  <button
+                    type="button"
+                    onClick={() => { void handleRefresh(); }}
+                    disabled={isRefreshing}
+                    className="inline-flex min-h-11 items-center gap-2 rounded-xl border border-white/15 bg-white/10 px-5 py-3 text-sm font-bold text-white transition-colors hover:bg-white/15 disabled:cursor-wait disabled:opacity-60"
+                  >
+                    <IconClock className="h-4 w-4 text-[#76C457]" />
+                    {isRefreshing ? 'Refreshing ledger' : 'Refresh ledger'}
+                  </button>
+                </div>
               </div>
-              <h1 className="text-3xl font-extrabold text-[#092328] mt-2 tracking-tight">
-                Privacy-Preserving Trade Hub
-              </h1>
-              <p className="text-sm text-[#092328]/70 mt-1">
-                Manage commercial receivables, certify deliveries, and execute automated financing.
-              </p>
-            </div>
 
-            <div className="flex flex-wrap items-center gap-3">
-              {currentProfile?.role === 'SupplierRole' && (
-                <button
-                  onClick={() => { setNewInvId(`INV-${crypto.randomUUID().slice(0, 8).toUpperCase()}`); setNewAmount(''); setNewDesc(''); setNewQuantity(''); setNewWeight(''); setShowCreateModal(true); }}
-                  className="bg-[#76C457] hover:bg-[#67b049] text-[#092328] text-sm font-black px-5 py-3 rounded-2xl shadow-sm hover:shadow-md transition-all flex items-center gap-2 cursor-pointer"
-                >
-                  <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M12 4v16m8-8H4" />
-                  </svg>
-                  Issue Commercial Invoice
-                </button>
-              )}
-              <button
-                type="button"
-                onClick={() => { void handleRefresh(); }}
-                disabled={isRefreshing}
-                className="rounded-xl border border-[#ebdca4] bg-[#fffdf5] px-4 py-3 text-xs font-bold text-[#092328] disabled:cursor-wait disabled:opacity-60"
+              <div className="border-t border-white/10 bg-[#0d323a] p-5 sm:p-6 lg:border-l lg:border-t-0">
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="rounded-2xl border border-white/10 bg-white/[0.06] p-4">
+                    <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-[#76C457] text-[#092328]">
+                      <IconCoins className="h-4 w-4" />
+                    </div>
+                    <p className="mt-4 text-[11px] font-bold uppercase tracking-wide text-white/50">Receivables</p>
+                    <p className="mt-1 text-xl font-black text-white">₦{totalReceivableValue.toLocaleString()}</p>
+                  </div>
+                  <div className="rounded-2xl border border-white/10 bg-white/[0.06] p-4">
+                    <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-[#f6e9bc] text-[#092328]">
+                      <IconExchange className="h-4 w-4" />
+                    </div>
+                    <p className="mt-4 text-[11px] font-bold uppercase tracking-wide text-white/50">Open requests</p>
+                    <p className="mt-1 text-xl font-black text-white">{openFinancingRequests.length}</p>
+                  </div>
+                  <div className="rounded-2xl border border-white/10 bg-white/[0.06] p-4">
+                    <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-white text-[#092328]">
+                      <IconBank className="h-4 w-4" />
+                    </div>
+                    <p className="mt-4 text-[11px] font-bold uppercase tracking-wide text-white/50">Active funding</p>
+                    <p className="mt-1 text-xl font-black text-white">₦{activeAgreementValue.toLocaleString()}</p>
+                  </div>
+                  <div className="rounded-2xl border border-white/10 bg-white/[0.06] p-4">
+                    <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-amber-200 text-[#092328]">
+                      <IconCheckCircle className="h-4 w-4" />
+                    </div>
+                    <p className="mt-4 text-[11px] font-bold uppercase tracking-wide text-white/50">Needs action</p>
+                    <p className="mt-1 text-xl font-black text-white">{pendingActionCount}</p>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </section>
+
+          <div className="mt-4 overflow-x-auto rounded-2xl border border-[#ebdca4] bg-[#fffdf5] p-2 shadow-sm">
+            <div className="flex min-w-max gap-2">
+              {!currentProfile && <button
+                onClick={() => { setActiveTab('all'); setCurrentPage(1); }}
+                className={`inline-flex min-h-11 items-center gap-2 rounded-xl px-4 py-2 text-xs font-black transition-colors ${selectedTab === 'all'
+                  ? 'bg-[#092328] text-white'
+                  : 'text-[#092328]/70 hover:bg-[#f6e9bc] hover:text-[#092328]'
+                  }`}
               >
-                {isRefreshing ? 'Refreshing...' : 'Refresh ledger'}
-              </button>
+                <IconExchange className={`h-4 w-4 ${selectedTab === 'all' ? 'text-[#76C457]' : 'text-[#092328]/50'}`} />
+                <span>Network ({uniqueInvoices.length})</span>
+              </button>}
+
+              {(!currentProfile || currentProfile.role === 'SupplierRole') && <button
+                onClick={() => { setActiveTab('supplier'); setCurrentPage(1); }}
+                className={`inline-flex min-h-11 items-center gap-2 rounded-xl px-4 py-2 text-xs font-black transition-colors ${selectedTab === 'supplier'
+                  ? 'bg-[#092328] text-[#76C457]'
+                  : 'text-[#092328]/70 hover:bg-[#f6e9bc] hover:text-[#092328]'
+                  }`}
+              >
+                <IconFileText className="h-4 w-4" />
+                <span>Supplier desk</span>
+              </button>}
+
+              {(!currentProfile || currentProfile.role === 'BuyerRole') && <button
+                onClick={() => { setActiveTab('buyer'); setCurrentPage(1); }}
+                className={`inline-flex min-h-11 items-center gap-2 rounded-xl px-4 py-2 text-xs font-black transition-colors ${selectedTab === 'buyer'
+                  ? 'bg-[#092328] text-[#76C457]'
+                  : 'text-[#092328]/70 hover:bg-[#f6e9bc] hover:text-[#092328]'
+                  }`}
+              >
+                <IconBuilding className="h-4 w-4" />
+                <span>Buyer desk</span>
+              </button>}
+
+              {(!currentProfile || currentProfile.role === 'FinancierRole') && <button
+                onClick={() => { setActiveTab('financier'); setCurrentPage(1); }}
+                className={`inline-flex min-h-11 items-center gap-2 rounded-xl px-4 py-2 text-xs font-black transition-colors ${selectedTab === 'financier'
+                  ? 'bg-[#092328] text-[#76C457]'
+                  : 'text-[#092328]/70 hover:bg-[#f6e9bc] hover:text-[#092328]'
+                  }`}
+              >
+                <IconBank className="h-4 w-4" />
+                <span>Financier desk</span>
+              </button>}
             </div>
-          </div>
-
-          {/* Unified Role Segmented Pill Bar */}
-          <div className="flex items-center gap-2 mt-6 overflow-x-auto pb-2">
-            {!currentProfile && <button
-              onClick={() => { setActiveTab('all'); setCurrentPage(1); }}
-              className={`px-4 py-2 rounded-xl text-xs sm:text-sm font-extrabold transition-all cursor-pointer whitespace-nowrap flex items-center gap-2 ${selectedTab === 'all'
-                ? 'bg-[#092328] text-white shadow-xs'
-                : 'bg-[#f0e3b9] text-[#092328]/70 hover:text-[#092328]'
-                }`}
-            >
-              <IconExchange className="w-4 h-4 text-[#76C457]" />
-              <span>All Network Invoices ({invoices.length})</span>
-            </button>}
-
-            {(!currentProfile || currentProfile.role === 'SupplierRole') && <button
-              onClick={() => { setActiveTab('supplier'); setCurrentPage(1); }}
-              className={`px-4 py-2 rounded-xl text-xs sm:text-sm font-extrabold transition-all cursor-pointer whitespace-nowrap flex items-center gap-2 ${selectedTab === 'supplier'
-                ? 'bg-[#092328] text-[#76C457] shadow-xs'
-                : 'bg-[#f0e3b9] text-[#092328]/70 hover:text-[#092328]'
-                }`}
-            >
-              <IconFileText className="w-4 h-4 text-[#76C457]" />
-              <span>Supplier Desk (Originate & Finance)</span>
-            </button>}
-
-            {(!currentProfile || currentProfile.role === 'BuyerRole') && <button
-              onClick={() => { setActiveTab('buyer'); setCurrentPage(1); }}
-              className={`px-4 py-2 rounded-xl text-xs sm:text-sm font-extrabold transition-all cursor-pointer whitespace-nowrap flex items-center gap-2 ${selectedTab === 'buyer'
-                ? 'bg-[#092328] text-[#76C457] shadow-xs'
-                : 'bg-[#f0e3b9] text-[#092328]/70 hover:text-[#092328]'
-                }`}
-            >
-              <IconBuilding className="w-4 h-4 text-[#76C457]" />
-              <span>Buyer Desk (Acknowledge & Deliver)</span>
-            </button>}
-
-            {(!currentProfile || currentProfile.role === 'FinancierRole') && <button
-              onClick={() => { setActiveTab('financier'); setCurrentPage(1); }}
-              className={`px-4 py-2 rounded-xl text-xs sm:text-sm font-extrabold transition-all cursor-pointer whitespace-nowrap flex items-center gap-2 ${selectedTab === 'financier'
-                ? 'bg-[#092328] text-[#76C457] shadow-xs'
-                : 'bg-[#f0e3b9] text-[#092328]/70 hover:text-[#092328]'
-                }`}
-            >
-              <IconBank className="w-4 h-4 text-[#76C457]" />
-              <span>Financier Desk (Marketplace & Yield)</span>
-            </button>}
           </div>
         </div>
       </div>
@@ -533,7 +583,16 @@ export default function UnifiedTradeDashboard() {
                 </div>
               </div>
             ) : (
-              <div className="space-y-4">
+              <section className="space-y-4">
+                <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
+                  <div>
+                    <p className="text-xs font-black uppercase tracking-wide text-[#092328]/50">{connectedCompany}</p>
+                    <h2 className="mt-1 text-2xl font-black tracking-tight text-[#092328]">Receivables workspace</h2>
+                  </div>
+                  <div className="rounded-xl border border-[#ebdca4] bg-[#fffdf5] px-4 py-3 text-xs font-bold text-[#092328]/70">
+                    Showing {displayedInvoices.length} of {sortedInvoices.length} records
+                  </div>
+                </div>
                 {displayedInvoices.map(({ payload: inv }) => {
                   const passport = store.getTrustPassport(inv.invoiceId);
                   const offers = store.getFinancingOffersForInvoice(inv.invoiceId);
@@ -552,40 +611,69 @@ export default function UnifiedTradeDashboard() {
                   return (
                     <div
                       key={inv.invoiceId}
-                      className="bg-[#FDF4D2] border border-[#ebdca4] rounded-3xl p-6 lg:p-8 shadow-xs hover:shadow-md transition-shadow"
+                      className="overflow-hidden rounded-[28px] border border-[#ebdca4] bg-[#fffdf5] shadow-sm transition-shadow hover:shadow-md"
                     >
-                      <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-6">
-
-                        {/* Left Column: Details */}
-                        <div className="space-y-3">
-                          <div className="flex items-center gap-3">
-                            <span className="font-mono text-lg font-black text-[#092328]">{inv.invoiceId}</span>
-                            <span className={`text-xs px-3 py-1 rounded-full font-bold ${getInvoiceStatusColor(inv.status)}`}>
-                              {inv.status}
-                            </span>
-                            <span className="text-xs text-[#092328]/60 font-medium hidden sm:inline">Verified Obligation</span>
+                      <div className="grid gap-0 lg:grid-cols-[1fr_280px]">
+                        <div className="p-5 sm:p-6">
+                          <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+                            <div className="min-w-0">
+                              <div className="flex flex-wrap items-center gap-2">
+                                <span className="font-mono text-base font-black text-[#092328] sm:text-lg">{inv.invoiceId}</span>
+                                <span className={`rounded-full px-3 py-1 text-[11px] font-black ${getInvoiceStatusColor(inv.status)}`}>
+                                  {inv.status.replace('Invoice', '')}
+                                </span>
+                              </div>
+                              <p className="mt-2 max-w-2xl text-sm font-bold leading-6 text-[#092328]">{inv.description}</p>
+                            </div>
+                            <div className="shrink-0 rounded-2xl bg-[#092328] px-4 py-3 text-left sm:text-right">
+                              <p className="text-[10px] font-black uppercase tracking-wide text-[#76C457]">Face value</p>
+                              <p className="mt-1 text-2xl font-black text-white">₦{Number(inv.amount).toLocaleString()}</p>
+                            </div>
                           </div>
 
-                          <p className="text-base font-semibold text-[#092328]">{inv.description}</p>
+                          <div className="mt-5 grid gap-3 border-y border-[#ebdca4] py-4 sm:grid-cols-3">
+                            <div>
+                              <p className="text-[10px] font-black uppercase tracking-wide text-[#092328]/45">Supplier</p>
+                              <p className="mt-1 truncate text-sm font-extrabold text-[#092328]">{inv.supplier.split('::')[0]}</p>
+                            </div>
+                            <div>
+                              <p className="text-[10px] font-black uppercase tracking-wide text-[#092328]/45">Buyer</p>
+                              <p className="mt-1 truncate text-sm font-extrabold text-[#092328]">{inv.buyer.split('::')[0]}</p>
+                            </div>
+                            <div>
+                              <p className="text-[10px] font-black uppercase tracking-wide text-[#092328]/45">Maturity</p>
+                              <p className="mt-1 text-sm font-extrabold text-[#092328]">{new Date(inv.dueDate).toLocaleDateString()}</p>
+                            </div>
+                          </div>
 
-                          <div className="flex flex-wrap items-center gap-5 text-xs text-[#092328]/70">
-                            <span>Supplier: <strong className="text-[#092328] font-bold">{inv.supplier.split('::')[0]}</strong></span>
-                            <span>•</span>
-                            <span>Buyer: <strong className="text-[#092328] font-bold">{inv.buyer.split('::')[0]}</strong></span>
-                            <span>•</span>
-                            <span>Face Value: <strong className="text-2xl font-black text-[#092328] ml-1">₦{Number(inv.amount).toLocaleString()}</strong></span>
-                            <span>•</span>
-                            <span>Due Date: <strong className="text-[#092328]">{new Date(inv.dueDate).toLocaleDateString()}</strong></span>
+                          <div className="mt-4">
+                            <div className="mb-2 flex items-center justify-between gap-3">
+                              <p className="text-[11px] font-black uppercase tracking-wide text-[#092328]/50">Items and documents</p>
+                              <span className="text-[11px] font-bold text-[#092328]/50">{(inv.items as import('@/lib/canton/types').InvoiceItem[]).length} item(s)</span>
+                            </div>
+                            <div className="divide-y divide-[#ebdca4] rounded-2xl border border-[#ebdca4] bg-[#FDF4D2]">
+                              {(inv.items as import('@/lib/canton/types').InvoiceItem[]).map((item, idx: number) => (
+                                <div key={idx} className="grid gap-2 px-4 py-3 text-xs sm:grid-cols-[1fr_auto] sm:items-center">
+                                  <div className="min-w-0">
+                                    <span className="block truncate font-black text-[#092328]">{item.description}</span>
+                                    <span className="mt-1 block text-[#092328]/60">{Number(item.quantity)} {item.unit}</span>
+                                  </div>
+                                  <span className="font-black text-[#092328]">₦{Number(item.itemTotal).toLocaleString()}</span>
+                                </div>
+                              ))}
+                            </div>
                           </div>
                         </div>
 
-                        {/* Right Column: Actions */}
-                        <div className="flex flex-wrap items-center gap-2 sm:gap-3">
+                        <div className="flex flex-col justify-between gap-4 border-t border-[#ebdca4] bg-[#f6e9bc] p-5 lg:border-l lg:border-t-0">
+                          <div>
+                            <p className="text-[11px] font-black uppercase tracking-wide text-[#092328]/50">Available actions</p>
+                            <div className="mt-3 grid gap-2">
 
                           {/* Inspect Trust Passport */}
                           <button
                             onClick={() => setSelectedPassport(passport)}
-                            className="bg-[#f6e9bc] hover:bg-[#ebdca4] text-[#092328] border border-[#ebdca4] text-xs font-bold px-4 py-2.5 rounded-xl transition-colors flex items-center gap-2 cursor-pointer"
+                            className="inline-flex min-h-11 w-full items-center justify-center gap-2 rounded-xl border border-[#ebdca4] bg-[#fffdf5] px-4 py-2.5 text-xs font-black text-[#092328] transition-colors hover:bg-white"
                           >
                             <span className="w-2 h-2 rounded-full bg-[#76C457]"></span>
                             Trust Passport
@@ -598,7 +686,7 @@ export default function UnifiedTradeDashboard() {
                                 setMaxFundingInput(Math.round(inv.amount * 0.85));
                                 setShowFinancingModal(inv.invoiceId);
                               }}
-                              className="bg-[#76C457] hover:bg-[#67b049] text-[#092328] text-xs font-black px-4 py-2.5 rounded-xl shadow-xs transition-colors cursor-pointer"
+                              className="inline-flex min-h-11 w-full items-center justify-center rounded-xl bg-[#76C457] px-4 py-2.5 text-xs font-black text-[#092328] shadow-sm transition-colors hover:bg-[#67b049]"
                             >
                               Request Financing
                             </button>
@@ -608,14 +696,14 @@ export default function UnifiedTradeDashboard() {
                           {supplierCanAct && offers.length > 0 && !isFinanced && !isSettled && (
                             <button
                               onClick={() => setShowOffersDrawer(inv.invoiceId)}
-                              className="bg-[#092328] hover:bg-[#133e46] text-[#76C457] text-xs font-bold px-4 py-2.5 rounded-xl transition-colors cursor-pointer flex items-center gap-1.5"
+                              className="inline-flex min-h-11 w-full items-center justify-center gap-2 rounded-xl bg-[#092328] px-4 py-2.5 text-xs font-black text-[#76C457] transition-colors hover:bg-[#133e46]"
                             >
                               <span>Review Bids</span>
                               <span className="bg-[#76C457] text-[#092328] text-[10px] font-black px-1.5 py-0.5 rounded-full">{offers.length}</span>
                             </button>
                           )}
                           {supplierCanAct && financingRequest && offers.length === 0 && !isFinanced && !isSettled && (
-                            <span className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-2.5 text-xs font-bold text-amber-900">
+                            <span className="inline-flex min-h-11 w-full items-center justify-center rounded-xl border border-amber-200 bg-amber-50 px-4 py-2.5 text-center text-xs font-bold text-amber-900">
                               Financing request open · waiting for offers
                             </span>
                           )}
@@ -627,7 +715,7 @@ export default function UnifiedTradeDashboard() {
                                 setConfirmNotes(`We acknowledge the ₦${Number(inv.amount).toLocaleString()} commercial obligation to ${inv.supplier.split('::')[0]}.`);
                                 setConfirmModalInvoice(inv.invoiceId);
                               }}
-                              className="bg-[#76C457] hover:bg-[#67b049] text-[#092328] text-xs font-black px-4 py-2.5 rounded-xl shadow-xs transition-colors cursor-pointer"
+                              className="inline-flex min-h-11 w-full items-center justify-center rounded-xl bg-[#76C457] px-4 py-2.5 text-xs font-black text-[#092328] shadow-sm transition-colors hover:bg-[#67b049]"
                             >
                               Confirm Obligation
                             </button>
@@ -637,7 +725,7 @@ export default function UnifiedTradeDashboard() {
                           {buyerCanAct && isConfirmed && (
                             <button
                               onClick={() => setDeliveryModalInvoice(inv.invoiceId)}
-                              className="bg-[#092328] hover:bg-[#133e46] text-[#76C457] text-xs font-bold px-4 py-2.5 rounded-xl shadow-xs transition-colors cursor-pointer"
+                              className="inline-flex min-h-11 w-full items-center justify-center rounded-xl bg-[#092328] px-4 py-2.5 text-xs font-black text-[#76C457] shadow-sm transition-colors hover:bg-[#133e46]"
                             >
                               Confirm Delivery
                             </button>
@@ -651,7 +739,7 @@ export default function UnifiedTradeDashboard() {
                                 setFinancingFee(Math.round(inv.amount * 0.06));
                                 setOfferModalInvoice(inv.invoiceId);
                               }}
-                              className="bg-[#092328] hover:bg-[#133e46] text-[#76C457] border border-[#1a4a54] text-xs font-bold px-4 py-2.5 rounded-xl transition-colors cursor-pointer"
+                              className="inline-flex min-h-11 w-full items-center justify-center rounded-xl border border-[#1a4a54] bg-[#092328] px-4 py-2.5 text-xs font-black text-[#76C457] transition-colors hover:bg-[#133e46]"
                             >
                               Quote Terms
                             </button>
@@ -662,7 +750,7 @@ export default function UnifiedTradeDashboard() {
                             <button
                               onClick={() => handleMarkFunded(agreement.agreementId)}
                               disabled={isMarkingFunded}
-                              className="bg-[#e4f5de] hover:bg-[#c9efbf] border border-[#76C457] text-[#2b6819] text-xs font-bold px-4 py-2.5 rounded-xl transition-colors cursor-pointer disabled:opacity-70 disabled:cursor-not-allowed flex items-center justify-center min-w-[125px]"
+                              className="inline-flex min-h-11 w-full items-center justify-center rounded-xl border border-[#76C457] bg-[#e4f5de] px-4 py-2.5 text-xs font-black text-[#2b6819] transition-colors hover:bg-[#c9efbf] disabled:cursor-not-allowed disabled:opacity-70"
                             >
                               {isMarkingFunded ? (
                                 <span className="flex items-center gap-1.5">
@@ -682,7 +770,7 @@ export default function UnifiedTradeDashboard() {
                           {buyerCanAct && isFinanced && agreement?.isFunded && agreement.buyer === currentParty && (
                             <button
                               onClick={() => setSettleModalInvoice(agreement.agreementId)}
-                              className="bg-[#76C457] hover:bg-[#67b049] text-[#092328] text-xs font-black px-4 py-2.5 rounded-xl shadow-xs transition-colors cursor-pointer"
+                              className="inline-flex min-h-11 w-full items-center justify-center rounded-xl bg-[#76C457] px-4 py-2.5 text-xs font-black text-[#092328] shadow-sm transition-colors hover:bg-[#67b049]"
                             >
                               Record Settlement
                             </button>
@@ -690,37 +778,27 @@ export default function UnifiedTradeDashboard() {
 
                           {/* Settled Badge */}
                           {isSettled && (
-                            <span className="bg-[#76C457] text-[#092328] text-xs font-black px-4 py-2.5 rounded-xl">
-                              ✓ Settled & Paid
+                            <span className="inline-flex min-h-11 w-full items-center justify-center rounded-xl bg-[#76C457] px-4 py-2.5 text-xs font-black text-[#092328]">
+                              Settled and paid
                             </span>
                           )}
 
-                        </div>
-
-                      </div>
-
-                      {/* Items Preview */}
-                      <div className="mt-5 pt-4 border-t border-[#ebdca4] text-xs">
-                        <span className="font-bold text-[#092328] block mb-2 uppercase text-[11px] tracking-wider">
-                          Commercial Items & Supporting Documents:
-                        </span>
-                        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 text-gray-700">
-                          {(inv.items as import('@/lib/canton/types').InvoiceItem[]).map((item, idx: number) => (
-                            <div key={idx} className="bg-[#f6e9bc] p-3 rounded-xl border border-[#ebdca4]">
-                              <span className="font-bold text-[#092328] block truncate">{item.description}</span>
-                              <div className="flex justify-between text-[11px] text-[#092328]/70 mt-1">
-                                <span>{Number(item.quantity)} {item.unit}</span>
-                                <span className="font-bold text-[#092328]">₦{Number(item.itemTotal).toLocaleString()}</span>
-                              </div>
                             </div>
-                          ))}
+                          </div>
+                          <div className="rounded-2xl border border-[#ebdca4] bg-[#fffdf5] p-4">
+                            <p className="text-[10px] font-black uppercase tracking-wide text-[#092328]/45">Ledger state</p>
+                            <div className="mt-2 flex items-center gap-2">
+                              <span className="h-2.5 w-2.5 rounded-full bg-[#76C457]"></span>
+                              <span className="text-xs font-black text-[#092328]">Verified obligation</span>
+                            </div>
+                          </div>
                         </div>
-                      </div>
 
+                      </div>
                     </div>
                   );
                 })}
-              </div>
+              </section>
             )}
             
             {/* Pagination Controls */}
@@ -882,7 +960,7 @@ export default function UnifiedTradeDashboard() {
                   </div>
                   {newDueDateDays !== '' && Number(newDueDateDays) > 0 && (
                     <div className="text-[10px] text-[#2b6819] font-bold mt-1.5 ml-1">
-                      Matures: {new Date(Date.now() + Number(newDueDateDays) * 86400000).toLocaleDateString(undefined, { weekday: 'short', year: 'numeric', month: 'short', day: 'numeric' })}
+                      Matures: {new Date(invoiceFormOpenedAt + Number(newDueDateDays) * 86400000).toLocaleDateString(undefined, { weekday: 'short', year: 'numeric', month: 'short', day: 'numeric' })}
                     </div>
                   )}
                 </div>

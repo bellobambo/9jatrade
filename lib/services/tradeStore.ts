@@ -397,22 +397,23 @@ class TradeStateStore {
     // Inject proxy invoices for Financiers who don't have read access to the base Invoice contract
     for (const source of [...requests, ...agreements]) {
       if (!invoices.find(inv => inv.payload.invoiceId === source.invoiceId)) {
+        const proxyInvoice: InvoicePayload = {
+          invoiceId: source.invoiceId,
+          supplier: source.supplier,
+          buyer: source.buyer,
+          operator: source.operator,
+          amount: source.invoiceAmount,
+          currency: source.currency,
+          issueDate: source.dueDate,
+          dueDate: source.dueDate,
+          description: 'Commercial Receivables Financing Request',
+          items: [],
+          supportingDocuments: [],
+          status: 'fundingAmount' in source ? 'InvoiceFinanced' : 'InvoiceConfirmed'
+        };
         invoices.push({
           cid: 'hidden-invoice-cid',
-          payload: {
-            invoiceId: source.invoiceId,
-            supplier: source.supplier,
-            buyer: source.buyer,
-            operator: source.operator,
-            amount: 'invoiceAmount' in source ? source.invoiceAmount : 0,
-            currency: 'currency' in source ? source.currency : 'NGN',
-            issueDate: 'dueDate' in source ? source.dueDate : '',
-            dueDate: 'dueDate' in source ? source.dueDate : '',
-            description: 'Commercial Receivables Financing Request',
-            items: [],
-            supportingDocuments: [],
-            status: 'fundingAmount' in source ? 'InvoiceFinanced' : 'InvoiceConfirmed'
-          } as any
+          payload: proxyInvoice
         });
       }
     }
@@ -434,22 +435,23 @@ class TradeStateStore {
     if (!invoice && (request || agreement)) {
       const proxySource = request?.payload || agreement?.payload;
       if (proxySource) {
+        const proxyInvoice: InvoicePayload = {
+          invoiceId,
+          supplier: proxySource.supplier,
+          buyer: proxySource.buyer,
+          operator: proxySource.operator,
+          amount: proxySource.invoiceAmount,
+          currency: proxySource.currency,
+          issueDate: proxySource.dueDate,
+          dueDate: proxySource.dueDate,
+          description: 'Commercial Receivables Financing Request',
+          items: [],
+          supportingDocuments: [],
+          status: agreement ? 'InvoiceFinanced' : 'InvoiceConfirmed'
+        };
         invoice = {
           cid: 'hidden-invoice-cid',
-          payload: {
-            invoiceId,
-            supplier: proxySource.supplier,
-            buyer: proxySource.buyer,
-            operator: proxySource.operator,
-            amount: 'invoiceAmount' in proxySource ? proxySource.invoiceAmount : 0,
-            currency: 'currency' in proxySource ? proxySource.currency : 'NGN',
-            issueDate: 'dueDate' in proxySource ? proxySource.dueDate : '',
-            dueDate: 'dueDate' in proxySource ? proxySource.dueDate : '',
-            description: 'Commercial Receivables Financing Request',
-            items: [],
-            supportingDocuments: [],
-            status: agreement ? 'InvoiceFinanced' : 'InvoiceConfirmed'
-          } as any
+          payload: proxyInvoice
         };
       }
     }

@@ -6,12 +6,48 @@
 
 1. Sign in to the [NODERS DevNet Wallet](https://wallet.validator.hackcanton-01.devnet.naas.noders.services) with your hackathon credentials. Select **Onboard yourself** and wait for allocation to finish. Copy the full party ID from the Wallet.
 2. In the [NODERS Console](https://console.participant.hackcanton-01.devnet.naas.noders.services), sign in with Authfactory and confirm that your ledger user has `CanActAs` and `CanReadAs` on the party.
-3. Follow the HackCanton Quickstart's API access section to request an access token with the `daml_ledger_api` scope. The access token's `sub` must be your Ledger user ID and its audience must include `https://hackcanton-01.devnet.naas.noders.services`.
-4. Copy `.env.example` to `.env.local` and configure `CANTON_LEDGER_JSON_API`, `NEXT_PUBLIC_CANTON_PACKAGE_ID`, `NEXT_PUBLIC_CANTON_PACKAGE_NAME`, `NEXT_PUBLIC_CANTON_OPERATOR_PARTY`, and `NEXT_PUBLIC_CANTON_FINANCIER_PARTIES`. Party lists can be comma-, semicolon-, or newline-separated.
+3. Generate a short-lived Ledger API access token:
+
+   ```bash
+   ./get_token.sh
+   ```
+
+   The script prompts for your HackCanton email and password, requests a Keycloak token with the `daml_ledger_api` scope, validates the response, and copies the `access_token` to your clipboard when `xclip`, `xsel`, or `wl-copy` is installed. If no clipboard tool is available, it prints the token in the terminal. The access token's `sub` must be your Ledger user ID and its audience must include `https://hackcanton-01.devnet.naas.noders.services`.
+4. Copy `.env.example` to `.env.local` and configure the Canton values for the participant and DAR you are using. Party lists can be comma-, semicolon-, or newline-separated.
 5. Build the matching DAR from `/home/bambo/my-project` with `daml build` and upload it to the same participant node using the Console. The package ID must match `NEXT_PUBLIC_CANTON_PACKAGE_ID`.
 6. Run `npm run dev`, open `http://localhost:3000`, choose **Connect to Ledger**, then enter the copied party ID and paste only the access token's `access_token` value.
 
 The app checks the token claims, reads `/v2/users/{sub}/rights`, verifies the party has both required rights, checks the configured package status, then loads active contracts visible to that party. It also reads unlocked Canton Coin (`Amulet`) holdings through the CIP-56 `HoldingV1` interface for the navbar balance. Commands use the Ledger API's `submit-and-wait-for-transaction` endpoint and the package-name template IDs (`#nineja-trade:Module:Template`) described in the Quickstart.
+
+## Environment variables
+
+Start from the example file:
+
+```bash
+cp .env.example .env.local
+```
+
+Useful `.env.local` keys:
+
+```dotenv
+# Server-side JSON Ledger API proxy target.
+CANTON_LEDGER_JSON_API=https://ledger-api-json.participant.hackcanton-01.devnet.naas.noders.services
+
+# Daml package deployed to the same participant.
+NEXT_PUBLIC_CANTON_PACKAGE_ID=8300d64906ab73949a20f2b1ecbd07e55deb03f89b4bb9a6051c2c964beab4a5
+NEXT_PUBLIC_CANTON_PACKAGE_NAME=nineja-trade
+
+# Parties allocated in the NODERS DevNet Wallet.
+NEXT_PUBLIC_CANTON_OPERATOR_PARTY=<operator-party-id::1220...>
+NEXT_PUBLIC_CANTON_FINANCIER_PARTIES=<financier-party-id::1220...>[,<another-financier-party-id::1220...>]
+
+# Optional convenience keys for local notes or future integrations.
+NEXT_PUBLIC_CANTON_LEDGER_JSON_API=https://ledger-api-json.participant.hackcanton-01.devnet.naas.noders.services
+NEXT_PUBLIC_CANTON_VALIDATOR_API=https://validator-api-http.validator.hackcanton-01.devnet.naas.noders.services
+NEXT_PUBLIC_CANTON_NETWORK=devnet
+```
+
+`CANTON_LEDGER_JSON_API` is preferred because it stays server-side. `NEXT_PUBLIC_CANTON_LEDGER_JSON_API` is only used as a fallback by the local API route. Do not put access tokens, Keycloak passwords, or refresh tokens in `.env.local`; paste each fresh `access_token` into the app when connecting.
 
 ## End-to-end trade workflow
 
